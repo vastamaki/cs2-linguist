@@ -1,0 +1,24 @@
+[workspace]
+members = ["crates/core", "crates/worker", "src-tauri"]
+default-members = ["crates/core"]
+resolver = "2"
+exclude = ["vendor/wasapi"]
+
+[patch.crates-io]
+wasapi = { path = "vendor/wasapi" }
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+linguist-core = { path = "crates/core" }
+
+[profile.release]
+lto = "thin"
+strip = true
+codegen-units = 1
