@@ -66,14 +66,14 @@ impl Default for Settings {
     }
 }
 
-// Whisper's multilingual language codes, including Cantonese only on models that support it
-// would be misleading here: the base/small vocabulary supports the original 99 languages.
+// The original 99 languages supported by every offered multilingual model.
+// Cantonese is omitted because it is only supported by large-v3.
 pub const LANGUAGES: &str = "auto en zh de es ru ko fr ja pt tr pl ca nl ar sv it id hi fi vi he uk el ms cs ro da hu ta no th ur hr bg lt la mi ml cy sk te fa lv bn sr az sl kn et mk br eu is hy ne mn bs kk sq sw gl mr pa si km sn yo so af oc ka be tg sd gu am yi lo uz fo ht ps tk nn mt sa lb my bo tl mg as tt haw ln ha ba jw su";
 
 impl Settings {
     pub fn validate(&self) -> Result<(), String> {
-        if !matches!(self.model.as_str(), "base" | "small") {
-            return Err("Choose the multilingual base or small model.".into());
+        if self.model == "vad" || models::model(&self.model).is_err() {
+            return Err("Choose a supported multilingual Whisper model.".into());
         }
         if !LANGUAGES.split_whitespace().any(|s| s == self.language) {
             return Err("Unsupported source language.".into());
@@ -183,10 +183,14 @@ mod tests {
     fn reject_unsupported_models_and_invalid_controls() {
         let mut s = Settings::default();
         assert!(s.validate().is_ok());
-        s.model = "turbo".into();
-        assert!(s.validate().is_err());
-        s.model = "base.en".into();
-        assert!(s.validate().is_err());
+        for model in ["base", "small", "medium", "large-v3"] {
+            s.model = model.into();
+            assert!(s.validate().is_ok(), "{model}");
+        }
+        for model in ["turbo", "base.en", "medium.en", "vad", "unknown"] {
+            s.model = model.into();
+            assert!(s.validate().is_err(), "{model}");
+        }
         s.model = "base".into();
         s.opacity = f64::NAN;
         assert!(s.validate().is_err());

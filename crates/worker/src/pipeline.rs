@@ -65,7 +65,7 @@ impl SpeechPipeline {
                 if dropped {
                     status(
                         "behind",
-                        "Falling behind — skipped queued audio. Try base or GPU mode.",
+                        "Falling behind — skipped queued audio. Choose a smaller model or use GPU mode.",
                     );
                 }
             }

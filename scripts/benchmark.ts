@@ -1,9 +1,9 @@
 import { resolve } from 'node:path';
 
-// Usage: bun scripts/benchmark.ts <worker> <base|small> <model.bin> <vad.bin> <audio.wav> [cpu|gpu] [language]
+// Usage: bun scripts/benchmark.ts <worker> <base|small|medium|large-v3> <model.bin> <vad.bin> <audio.wav> [cpu|gpu] [language]
 const [worker, model, modelPath, vadPath, wav, backend = 'cpu', language = 'auto'] = process.argv.slice(2);
-if (!worker || !['base', 'small'].includes(model) || !modelPath || !vadPath || !wav) {
-  console.error('Usage: bun scripts/benchmark.ts <worker> <base|small> <model.bin> <vad.bin> <16k-mono.wav> [cpu|gpu] [language]');
+if (!worker || !['base', 'small', 'medium', 'large-v3'].includes(model) || !modelPath || !vadPath || !wav) {
+  console.error('Usage: bun scripts/benchmark.ts <worker> <base|small|medium|large-v3> <model.bin> <vad.bin> <16k-mono.wav> [cpu|gpu] [language]');
   process.exit(1);
 }
 const child = Bun.spawn([resolve(worker), '--wav', resolve(wav)], { stdin: 'pipe', stdout: 'pipe', stderr: 'inherit' });

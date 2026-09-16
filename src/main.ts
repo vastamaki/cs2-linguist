@@ -1,6 +1,6 @@
 import './style.css';
 import { call, desktop, on } from './api';
-import { appendCaption, type VisibleCaption } from './captions';
+import { appendCaption, languageName, overlayStats, type VisibleCaption } from './captions';
 import { SettingsAutosave } from './settings';
 import type { Caption, DownloadProgress, EngineStatus, InstalledModel, Settings, Snapshot } from './types';
 
@@ -9,6 +9,15 @@ const isOverlay = new URLSearchParams(location.search).has('overlay');
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const speechIcon = '<svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M6 7h20v14H15l-7 5v-5H6V7Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M11 12h10M11 16h7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
 const playIcon = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 4 10 6-10 6Z" fill="currentColor"/></svg>';
+const overlayHeader = `<header class="caption-header" aria-label="Translation details">
+  <div class="caption-heading"><span id="overlay-engine">Paused</span><span><span id="overlay-backend">CPU</span> · <span id="overlay-model">small</span></span></div>
+  <dl class="caption-stats">
+    <div title="Language of the latest caption. Detection is off when a fixed spoken language is selected."><dt>Detected</dt><dd id="overlay-detected">—</dd></div>
+    <div title="The spoken language currently selected in settings."><dt>Spoken</dt><dd id="overlay-spoken">Auto</dd></div>
+    <div title="Last caption: time from speech ending to translation ready."><dt>Delay</dt><dd id="overlay-delay">—</dd></div>
+    <div title="Time spent translating the last audio segment."><dt>Decode</dt><dd id="overlay-decode">—</dd></div>
+  </dl>
+</header>`;
 let snapshot: Snapshot;
 let status: EngineStatus;
 let captions: VisibleCaption[] = [];
@@ -40,11 +49,24 @@ function renderCaptions() {
     entry.className = 'caption'; entry.textContent = c.text;
     return entry;
   }));
+  renderOverlayStats();
+}
+function renderOverlayStats() {
+  if (!status) return;
+  const preview = !isOverlay;
+  const settings = preview ? formSettings() : snapshot.settings;
+  const stats = overlayStats(settings, preview ? { ...status, running: true, backend: settings.backend } : status,
+    preview ? { id: 0, generation: status.generation, text: '', language: 'ru', latency_ms: 1200, inference_ms: 600, expires: Infinity } : captions.at(-1), Date.now());
+  for (const [key, value] of Object.entries(stats)) $(`overlay-${key}`).textContent = value;
+  const phases: Record<string, string> = { paused: 'Paused', loading: 'Loading model', waiting: 'Waiting for CS2', listening: 'Listening', behind: 'Falling behind', reconnecting: 'Reconnecting', error: 'Engine error' };
+  $('overlay-engine').textContent = preview ? 'Example · English subtitles' : phases[status.phase] ?? status.message;
+  $('overlay-engine').classList.toggle('active', !preview && status.phase === 'listening');
 }
 function updateStatus(value: EngineStatus) {
   if (status && value.generation < status.generation) return;
-  if (!status || value.generation !== status.generation || !value.running) { captions = []; renderCaptions(); }
+  if (!status || value.generation !== status.generation || !value.running || ['loading', 'waiting', 'reconnecting', 'error'].includes(value.phase)) { captions = []; renderCaptions(); }
   status = value;
+  renderOverlayStats();
   if (isOverlay) {
     const visible = ['behind', 'error', 'reconnecting'].includes(value.phase);
     $('overlay-status').hidden = !visible;
@@ -66,8 +88,9 @@ function updateModels(models: InstalledModel[]) {
   const vad = models.find(m => m.id === 'vad')!;
   $('model-ready').textContent = model.installed && vad.installed ? 'READY OFFLINE' : 'SETUP REQUIRED';
   $('model-ready').classList.toggle('ready', model.installed && vad.installed);
-  $('model-description').textContent = selected === 'small' ? 'Better recognition for multilingual voice chat.' : 'A lighter model with less CPU and memory use.';
-  $('model-size').textContent = `${Math.round(model.bytes / 1024 / 1024)} MB + speech detector`;
+  updateConditionalSettings();
+  const size = model.bytes >= 1e9 ? `${(model.bytes / 1e9).toFixed(2)} GB` : `${Math.round(model.bytes / 1e6)} MB`;
+  $('model-size').textContent = `${size} + speech detector`;
   $('download-label').textContent = model.installed && vad.installed ? 'Verify / repair models' : 'Download models';
   $('vad-state').textContent = vad.installed ? 'Speech detector ready' : 'Speech detector included in download';
 }
@@ -122,6 +145,21 @@ function updateConditionalSettings() {
   $('cpu-options').hidden = gpu;
   $<HTMLInputElement>('threads').disabled = gpu;
   $('gpu-help').hidden = !gpu;
+  const model = $<HTMLSelectElement>('model').value as Settings['model'];
+  const descriptions: Record<Settings['model'], string> = {
+    base: 'Lowest memory use and fastest processing, with lower recognition accuracy.',
+    small: 'A balance of speed and accuracy. Try medium if words are missed.',
+    medium: 'Higher accuracy, with more memory use and delay. A good next step from small.',
+    'large-v3': 'The largest model offered for difficult speech. Uses the most memory and may delay captions.',
+  };
+  const larger = model === 'medium' || model === 'large-v3';
+  $('model-description').textContent = descriptions[model] + (larger
+    ? gpu ? ' Shares GPU memory with CS2; choose a smaller model if captions fall behind.' : ' GPU recommended; CPU processing may be too slow for live captions.'
+    : '');
+  $('language-help').textContent = $<HTMLSelectElement>('language').value === 'auto'
+    ? 'Auto guesses the language for each phrase. For mostly Russian chat, choose Russian to avoid wrong guesses on short callouts.'
+    : 'Fixed language avoids guessing on short callouts. Use Auto when players speak different languages.';
+  renderOverlayStats();
 }
 function updateAppearanceLabels() {
   const s = formSettings();
@@ -140,9 +178,9 @@ function settingsPage() {
     <section class="status-strip" aria-label="Translation status"><div class="status-copy"><span id="status-dot" class="status-dot"></span><div><span id="engine-phase" class="eyebrow">ENGINE PAUSED</span><strong id="status-text">Ready when you are</strong></div></div><button id="start" class="button primary">${playIcon}<span id="start-label">Start translation</span></button></section>
     <form id="settings-form" class="workspace"><div class="controls">
       <section class="panel"><div class="section-heading"><span class="section-number">01</span><h2>Translation</h2><span class="destination">→ ENGLISH</span></div>
-        <label for="language">Spoken language</label><select id="language"></select><p class="help">Auto works across languages. Choose Russian for more consistent short callouts.</p>
+        <label for="language">Spoken language</label><select id="language" aria-describedby="language-help"></select><p id="language-help" class="help"></p>
         <div class="field-header"><label for="model">Speech model</label><span id="model-ready" class="tag">SETUP REQUIRED</span></div>
-        <select id="model"><option value="small">Whisper small · recommended</option><option value="base">Whisper base · lightweight</option></select><p id="model-description" class="help"></p>
+        <select id="model" aria-describedby="model-description"><option value="base">Whisper base · lightweight</option><option value="small">Whisper small · balanced</option><option value="medium">Whisper medium · higher accuracy</option><option value="large-v3">Whisper large-v3 · highest capacity</option></select><p id="model-description" class="help"></p>
         <div class="download-box"><div class="download-meta"><span class="download-symbol">↓</span><div><strong id="model-size"></strong><small id="vad-state"></small></div></div><button id="download" type="button" class="button small"><span id="download-label">Download models</span></button>
           <div id="progress-section" hidden><progress id="progress" max="1" value="0"></progress><div class="progress-row"><span id="progress-text" role="status"></span><button id="cancel" type="button" class="text-button">Cancel</button></div></div>
           <div class="import-row"><button id="import" type="button" class="text-button">Import model file</button><span>·</span><button id="import-vad" type="button" class="text-button">Import speech detector</button></div>
@@ -151,7 +189,7 @@ function settingsPage() {
       <section class="panel"><div class="section-heading"><span class="section-number">02</span><h2>Processing</h2></div><fieldset class="segmented"><legend class="sr-only">Processing backend</legend><label><input type="radio" name="backend" id="cpu" value="cpu" checked><span>CPU <small>Compatible</small></span></label><label><input type="radio" name="backend" id="gpu" value="gpu"><span>GPU <small>Accelerated</small></span></label></fieldset><div id="cpu-options" class="thread-row"><div><label for="threads">CPU threads</label><p class="help">Leave some room for the game.</p></div><input id="threads" type="number" required min="1" max="32" value="4"></div><p id="gpu-help" class="help gpu-help" hidden>GPU mode uses Vulkan. If unavailable, Linguist uses CPU and tells you why.</p></section>
       <p id="save-state" class="help" role="status">Settings save automatically.</p>
     </div>
-    <aside class="preview-column"><section class="preview-panel"><div class="preview-header"><span class="eyebrow">YOUR IN-GAME OVERLAY</span><span class="preview-tag">PREVIEW</span></div><div class="game-preview"><div class="map-grid"></div><div class="crosshair"></div><span class="game-coordinate">MID / 01</span><div class="sample-captions"><div class="caption sample-old">Two players coming through mid.</div><div class="caption">Watch your left. I’m covering B.</div></div><span class="preview-footnote">Example captions</span></div><div class="preview-caption">The conversation, without the distraction.</div></section>
+    <aside class="preview-column"><section class="preview-panel"><div class="preview-header"><span class="eyebrow">YOUR IN-GAME OVERLAY</span><span class="preview-tag">PREVIEW</span></div><div class="game-preview"><div class="map-grid"></div><div class="crosshair"></div><span class="game-coordinate">MID / 01</span><div class="sample-captions caption-panel">${overlayHeader}<div class="caption-content"><div class="caption sample-old">Two players coming through mid.</div><div class="caption">Watch your left. I’m covering B.</div></div></div><span class="preview-footnote">Example captions and timing</span></div><div class="preview-caption">The conversation, without the distraction.</div></section>
       <section class="panel appearance"><div class="section-heading"><span class="section-number">03</span><h2>Overlay</h2></div>
         <div class="field-header"><label for="font-size">Subtitle size</label><output id="font-value" for="font-size">24px</output></div><input id="font-size" type="range" min="14" max="48" value="24">
         <div class="field-header"><label for="opacity">Background opacity</label><output id="opacity-value" for="opacity">45%</output></div><input id="opacity" type="range" min="0" max="90" value="45">
@@ -163,10 +201,9 @@ function settingsPage() {
   </main>`;
 
   $('platform-note').hidden = snapshot.supported;
-  const languageNames = new Intl.DisplayNames(['en'], { type: 'language' });
   for (const code of snapshot.languages) {
     const option = document.createElement('option'); option.value = code;
-    try { option.textContent = code === 'auto' ? 'Detect automatically' : languageNames.of(code) ?? code; } catch { option.textContent = code; }
+    option.textContent = code === 'auto' ? 'Detect automatically' : languageName(code);
     $('language').append(option);
   }
   fillSettings(snapshot.settings); updateModels(snapshot.models); updateProgress(snapshot.download);
@@ -190,7 +227,7 @@ function settingsPage() {
     } finally { button.disabled = !snapshot.supported; }
   });
   $('model').onchange = () => updateModels(snapshot.models);
-  for (const id of ['cpu', 'gpu']) $(id).onchange = updateConditionalSettings;
+  for (const id of ['cpu', 'gpu', 'language']) $(id).onchange = updateConditionalSettings;
   $('download').onclick = () => void attempt(() => call('download_model', { id: $<HTMLSelectElement>('model').value }));
   $('import').onclick = () => void attempt(() => call('import_model', { id: $<HTMLSelectElement>('model').value }));
   $('import-vad').onclick = () => void attempt(() => call('import_model', { id: 'vad' }));
@@ -202,7 +239,7 @@ function settingsPage() {
 
 function overlayPage() {
   document.body.classList.add('overlay-body');
-  root.innerHTML = `<div class="overlay-shell"><div id="move-bar" hidden><span id="drag-handle">⠿ Drag to move · resize from edges</span><button id="lock-overlay" type="button">Lock overlay</button></div><div id="overlay-status" class="overlay-status" role="status" hidden></div><div id="captions" aria-live="polite"></div><div id="move-example" class="caption" hidden>Your translated callouts will appear here.</div><div id="error" class="notice error" hidden></div></div>`;
+  root.innerHTML = `<div class="overlay-shell"><div id="move-bar" hidden><span id="drag-handle">⠿ Drag to move · resize from edges</span><button id="lock-overlay" type="button">Lock overlay</button></div><section class="caption-panel">${overlayHeader}<div id="overlay-status" class="overlay-status" role="status" hidden></div><div class="caption-content"><div id="captions" aria-live="polite"></div><div id="move-example" class="caption" hidden>Your translated callouts will appear here.</div></div><div id="error" class="notice error" hidden></div></section></div>`;
   $('lock-overlay').onclick = () => void attempt(() => call('set_overlay_locked', { locked: true }));
   $('drag-handle').onpointerdown = event => {
     if (event.button !== 0 || locked || !desktop) return;
@@ -235,7 +272,7 @@ async function initialize() {
     on<Settings>('settings', settings => {
       snapshot.settings = settings;
       // An acknowledgement for an earlier save must not reset a newer edit.
-      if (isOverlay) applyAppearance(settings);
+      if (isOverlay) { applyAppearance(settings); renderOverlayStats(); }
       else if (!autosave.pending) { fillSettings(settings); updateModels(snapshot.models); }
     }),
     on<InstalledModel[]>('models-changed', models => { if (!isOverlay) updateModels(models); }),
@@ -244,6 +281,8 @@ async function initialize() {
     on<string>('app-error', error),
   ]);
   // Refresh after listeners are attached so window creation cannot miss a status transition.
-  const current = await call<Snapshot>('snapshot'); updateStatus(current.status); updateLock(current.overlay_locked);
+  const current = await call<Snapshot>('snapshot'); snapshot.settings = current.settings;
+  if (isOverlay) applyAppearance(current.settings);
+  updateStatus(current.status); updateLock(current.overlay_locked);
 }
 void initialize().catch(error);

@@ -16,13 +16,19 @@ pub struct Model {
 }
 
 // SHA-256 and byte lengths come from the upstream Git LFS pointers at these pinned revisions.
-pub const MODELS: [Model; 3] = [
+pub const MODELS: [Model; 5] = [
     Model { id: "base", filename: "ggml-base.bin", bytes: 147951465,
         sha256: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.bin" },
     Model { id: "small", filename: "ggml-small.bin", bytes: 487601967,
         sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.bin" },
+    Model { id: "medium", filename: "ggml-medium.bin", bytes: 1533763059,
+        sha256: "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208",
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-medium.bin" },
+    Model { id: "large-v3", filename: "ggml-large-v3.bin", bytes: 3095033483,
+        sha256: "64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2",
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3.bin" },
     Model { id: "vad", filename: "ggml-silero-v6.2.0.bin", bytes: 885098,
         sha256: "2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987",
         url: "https://huggingface.co/ggml-org/whisper-vad/resolve/9ffd54a1e1ee413ddf265af9913beaf518d1639b/ggml-silero-v6.2.0.bin" },

@@ -1,6 +1,6 @@
 export type Backend = 'cpu' | 'gpu';
 export interface Settings {
-  backend: Backend; model: 'base' | 'small'; language: string; threads: number;
+  backend: Backend; model: 'base' | 'small' | 'medium' | 'large-v3'; language: string; threads: number;
   font_size: number; opacity: number;
   position: { x: number; y: number; width: number; height: number } | null;
 }

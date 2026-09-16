@@ -146,11 +146,15 @@ fn run() -> Result<(), String> {
         if item.stale() {
             status(
                 "behind",
-                "Falling behind — skipped old audio. Try base or GPU mode.",
+                "Falling behind — skipped old audio. Choose a smaller model or use GPU mode.",
             );
             continue;
         }
-        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        // Compare candidate phrases instead of committing to the first greedy path.
+        let mut params = FullParams::new(SamplingStrategy::BeamSearch {
+            beam_size: 5,
+            patience: -1.0,
+        });
         params.set_n_threads(settings.threads as i32);
         params.set_translate(true);
         params.set_language(if settings.language == "auto" {
@@ -177,15 +181,15 @@ fn run() -> Result<(), String> {
         if item.stale() {
             status(
                 "behind",
-                "Falling behind — result expired. Try base or GPU mode.",
+                "Falling behind — result expired. Choose a smaller model or use GPU mode.",
             );
             continue;
         }
         let mut text = String::new();
         for segment in state.as_iter() {
-            if segment.no_speech_probability() < 0.6 {
-                text.push_str(&segment.to_str_lossy().map_err(|e| e.to_string())?);
-            }
+            // Whisper already checks no-speech probability AND decoding confidence.
+            // Filtering again on no-speech alone discards speech it confidently decoded.
+            text.push_str(&segment.to_str_lossy().map_err(|e| e.to_string())?);
         }
         let text = text.trim().to_string();
         if text.is_empty() {

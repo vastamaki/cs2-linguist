@@ -10,9 +10,12 @@ still required; no Windows installer has been produced on the macOS development 
 
 ## Use
 
-1. Start Linguist and download **Whisper small** (about 465 MiB) or **base**
-   (about 141 MiB). The download also includes the 865 KiB Silero speech detector.
-2. Leave the source language on automatic, or choose Russian for short callouts.
+1. Start Linguist and download a model: **base** (148 MB, lightweight), **small**
+   (488 MB, balanced default), **medium** (1.53 GB, higher accuracy), or
+   **large-v3** (3.10 GB, highest capacity). Sizes are downloads, not GPU memory
+   requirements. Each download also includes the 885 KB Silero speech detector.
+2. Choose Russian when the voice chat is mostly Russian, especially for short
+   callouts. Auto guesses separately for each phrase; use it for mixed languages.
 3. Choose CPU or GPU and click **Start translation**. Settings save automatically;
    sliders preview immediately and save when released. Start shows the overlay;
    **Pause translation** stops capture and hides it. The app waits for `cs2.exe`
@@ -27,11 +30,29 @@ The Settings status shows the **actual** backend, including the reason for a GPU
 fallback. CPU is the initial default. Each backend/model/language/thread change
 restarts the worker and discards pending captions.
 
+The overlay has a thin border and a compact header showing engine state, actual
+CPU/GPU backend, model, selected spoken language, and the latest caption's detected
+language, delay, and decoding time. Detection reads **Off** when a fixed source
+language is selected. Timing/language readings clear when captions expire or the
+engine restarts; delay measures speech end to translation ready. Settings shows
+the same design with clearly labeled example captions and timing.
+
 Model import accepts the exact upstream GGML files listed in
 [`crates/core/src/models.rs`](crates/core/src/models.rs), verified by SHA-256.
 For an offline setup, import both the speech model and the speech detector using
 their separate buttons. `.en`, `turbo`, quantized, and arbitrary other models are
 not accepted by this version.
+
+For missed or incorrect words, try **GPU + medium + a fixed spoken language**
+first. If your GPU has enough memory alongside CS2, try large-v3 next.
+[Whisper recommends medium or large for better translation](https://github.com/openai/whisper#available-models-and-languages).
+Larger models increase memory use and caption delay; if you see **Falling behind**
+or game performance suffers, move down a model size. No model can reliably recover
+voices buried in gunfire or multiple people talking over each other.
+
+Decoding uses five-candidate beam search to compare possible phrases. Whisper's
+built-in speech/confidence check filters silence; the app does not discard its
+accepted segments using an additional speech-probability-only threshold.
 
 ## Develop on Windows
 
@@ -129,7 +150,7 @@ cargo clippy -p linguist-core -p linguist --locked -- -D warnings
 ```
 
 For actual inference, prepare a **16 kHz mono signed 16-bit PCM WAV**, obtain the
-supported base/small and VAD model files, and run:
+one of the supported speech model files and the VAD model, and run:
 
 ```sh
 cargo build --release -p linguist-worker --locked
