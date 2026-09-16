@@ -61,6 +61,7 @@ jobs:
             if ($mode -eq 'cpu' -and $dependencies -match '(?i)vulkan-1\.dll') {
               throw 'The CPU worker must not depend on Vulkan.'
             }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: linguist-windows-x64
