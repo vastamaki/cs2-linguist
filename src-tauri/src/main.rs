@@ -62,9 +62,8 @@ fn save_settings(app: tauri::AppHandle, mut settings: Settings) -> Result<(), St
     let state = app.state::<AppState>();
     let changed = {
         let mut current = state.settings.lock().unwrap();
-        // Geometry and visibility are owned by the overlay; a settings form may be stale.
+        // Geometry is owned by the overlay; a settings form may be stale.
         settings.position = current.position.clone();
-        settings.overlay_visible = current.overlay_visible;
         let changed = current.engine_changed(&settings);
         persist(&app, &settings)?;
         *current = settings.clone();
@@ -73,18 +72,25 @@ fn save_settings(app: tauri::AppHandle, mut settings: Settings) -> Result<(), St
     let _ = app.emit("settings", &settings);
     let running = state.runtime.lock().unwrap().status.running;
     if changed && running {
-        engine::start(&app)?;
+        stop(app.clone())?;
+        start(app)?;
     }
     Ok(())
 }
 
 #[tauri::command]
 fn start(app: tauri::AppHandle) -> Result<(), String> {
-    engine::start(&app)
+    engine::start(&app)?;
+    if let Err(error) = overlay::set_overlay_locked(app.clone(), true) {
+        engine::stop(&app);
+        return Err(error);
+    }
+    Ok(())
 }
 #[tauri::command]
-fn stop(app: tauri::AppHandle) {
+fn stop(app: tauri::AppHandle) -> Result<(), String> {
     engine::stop(&app);
+    overlay::set_overlay_locked(app, true)
 }
 
 fn show_settings(app: &tauri::AppHandle) {
@@ -105,22 +111,13 @@ fn tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let cpu = item("cpu", "CPU")?;
     let gpu = item("gpu", "GPU (Vulkan)")?;
     let backend = Submenu::with_items(app, "Processing mode", true, &[&cpu, &gpu])?;
-    let visibility = item("visibility", "Show / Hide overlay")?;
     let position = item("position", "Move / Lock overlay")?;
     let reset = item("reset", "Reset overlay position")?;
     let settings = item("settings", "Settings…")?;
     let quit = item("quit", "Quit Linguist")?;
     let menu = Menu::with_items(
         app,
-        &[
-            &start,
-            &backend,
-            &visibility,
-            &position,
-            &reset,
-            &settings,
-            &quit,
-        ],
+        &[&start, &backend, &position, &reset, &settings, &quit],
     )?;
     TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().unwrap().clone())
@@ -137,10 +134,9 @@ fn tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                         .status
                         .running;
                     if running {
-                        engine::stop(app);
-                        Ok(())
+                        crate::stop(app.clone())
                     } else {
-                        engine::start(app)
+                        crate::start(app.clone())
                     }
                 }
                 "cpu" | "gpu" => {
@@ -151,15 +147,6 @@ fn tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                         Backend::Gpu
                     };
                     save_settings(app.clone(), settings)
-                }
-                "visibility" => {
-                    let visible = app
-                        .state::<AppState>()
-                        .settings
-                        .lock()
-                        .unwrap()
-                        .overlay_visible;
-                    overlay::set_overlay_visible(app.clone(), !visible)
                 }
                 "position" => {
                     let locked = app
@@ -269,7 +256,6 @@ fn main() {
             models::cancel_download,
             models::import_model,
             overlay::set_overlay_locked,
-            overlay::set_overlay_visible,
             overlay::reset_overlay
         ])
         .build(tauri::generate_context!())

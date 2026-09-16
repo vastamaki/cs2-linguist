@@ -1,6 +1,7 @@
 import './style.css';
 import { call, desktop, on } from './api';
 import { appendCaption, type VisibleCaption } from './captions';
+import { SettingsAutosave } from './settings';
 import type { Caption, DownloadProgress, EngineStatus, InstalledModel, Settings, Snapshot } from './types';
 
 const root = document.querySelector<HTMLDivElement>('#app')!;
@@ -12,6 +13,10 @@ let snapshot: Snapshot;
 let status: EngineStatus;
 let captions: VisibleCaption[] = [];
 let locked = true;
+const autosave = new SettingsAutosave(async settings => {
+  if (desktop) await call('save_settings', { settings });
+  else snapshot.settings = settings;
+});
 
 function error(message: unknown) {
   const text = message instanceof Error ? message.message : String(message);
@@ -80,20 +85,27 @@ function updateProgress(progress: DownloadProgress | null) {
   if (progress.phase === 'error') error(progress.message);
 }
 function formSettings(): Settings {
+  const gpu = $<HTMLInputElement>('gpu').checked;
+  const threads = Number($<HTMLInputElement>('threads').value);
   return { ...snapshot.settings,
-    backend: $<HTMLInputElement>('gpu').checked ? 'gpu' : 'cpu',
+    backend: gpu ? 'gpu' : 'cpu',
     model: $<HTMLSelectElement>('model').value as Settings['model'],
     language: $<HTMLSelectElement>('language').value,
-    threads: Number($<HTMLInputElement>('threads').value),
+    threads: Number.isInteger(threads) && threads >= 1 && threads <= 32 ? threads : snapshot.settings.threads,
     font_size: Number($<HTMLInputElement>('font-size').value),
     opacity: Number($<HTMLInputElement>('opacity').value) / 100,
   };
 }
 async function save() {
-  const settings = formSettings();
-  await call('save_settings', { settings });
-  snapshot.settings = settings;
-  $('save-label').textContent = 'Changes saved';
+  if (!$<HTMLFormElement>('settings-form').reportValidity()) return;
+  $('save-state').textContent = desktop ? 'Saving settings…' : 'Updating preview…';
+  try {
+    await autosave.save(formSettings());
+    if (!autosave.pending) $('save-state').textContent = desktop ? 'Settings saved automatically.' : 'Preview updated · settings are not saved.';
+  } catch (e) {
+    $('save-state').textContent = 'Could not apply settings. Change the setting to retry.';
+    throw e;
+  }
 }
 function fillSettings(s: Settings) {
   $<HTMLInputElement>(s.backend).checked = true;
@@ -102,8 +114,14 @@ function fillSettings(s: Settings) {
   $<HTMLInputElement>('threads').value = String(s.threads);
   $<HTMLInputElement>('font-size').value = String(s.font_size);
   $<HTMLInputElement>('opacity').value = String(Math.round(s.opacity * 100));
-  $<HTMLInputElement>('show-overlay').checked = s.overlay_visible;
+  updateConditionalSettings();
   updateAppearanceLabels();
+}
+function updateConditionalSettings() {
+  const gpu = $<HTMLInputElement>('gpu').checked;
+  $('cpu-options').hidden = gpu;
+  $<HTMLInputElement>('threads').disabled = gpu;
+  $('gpu-help').hidden = !gpu;
 }
 function updateAppearanceLabels() {
   const s = formSettings();
@@ -120,7 +138,7 @@ function settingsPage() {
     <div id="platform-note" class="notice" hidden>UI preview — live game capture requires the Windows 11 desktop app.</div>
     <div id="error" class="notice error" role="alert" hidden></div><div id="warning" class="notice" role="status" hidden></div>
     <section class="status-strip" aria-label="Translation status"><div class="status-copy"><span id="status-dot" class="status-dot"></span><div><span id="engine-phase" class="eyebrow">ENGINE PAUSED</span><strong id="status-text">Ready when you are</strong></div></div><button id="start" class="button primary">${playIcon}<span id="start-label">Start translation</span></button></section>
-    <div class="workspace"><form id="settings-form" class="controls">
+    <form id="settings-form" class="workspace"><div class="controls">
       <section class="panel"><div class="section-heading"><span class="section-number">01</span><h2>Translation</h2><span class="destination">→ ENGLISH</span></div>
         <label for="language">Spoken language</label><select id="language"></select><p class="help">Auto works across languages. Choose Russian for more consistent short callouts.</p>
         <div class="field-header"><label for="model">Speech model</label><span id="model-ready" class="tag">SETUP REQUIRED</span></div>
@@ -130,17 +148,17 @@ function settingsPage() {
           <div class="import-row"><button id="import" type="button" class="text-button">Import model file</button><span>·</span><button id="import-vad" type="button" class="text-button">Import speech detector</button></div>
         </div>
       </section>
-      <section class="panel"><div class="section-heading"><span class="section-number">02</span><h2>Processing</h2></div><fieldset class="segmented"><legend class="sr-only">Processing backend</legend><label><input type="radio" name="backend" id="cpu" value="cpu" checked><span>CPU <small>Compatible</small></span></label><label><input type="radio" name="backend" id="gpu" value="gpu"><span>GPU <small>Accelerated</small></span></label></fieldset><div class="thread-row"><div><label for="threads">CPU threads</label><p class="help">Leave some room for the game.</p></div><input id="threads" type="number" min="1" max="32" value="4"></div><p class="help gpu-help">GPU mode uses Vulkan. If unavailable, Linguist uses CPU and tells you why.</p></section>
-      <button id="save" class="button save" type="submit"><span id="save-label">Apply changes</span><span>↗</span></button>
-    </form>
+      <section class="panel"><div class="section-heading"><span class="section-number">02</span><h2>Processing</h2></div><fieldset class="segmented"><legend class="sr-only">Processing backend</legend><label><input type="radio" name="backend" id="cpu" value="cpu" checked><span>CPU <small>Compatible</small></span></label><label><input type="radio" name="backend" id="gpu" value="gpu"><span>GPU <small>Accelerated</small></span></label></fieldset><div id="cpu-options" class="thread-row"><div><label for="threads">CPU threads</label><p class="help">Leave some room for the game.</p></div><input id="threads" type="number" required min="1" max="32" value="4"></div><p id="gpu-help" class="help gpu-help" hidden>GPU mode uses Vulkan. If unavailable, Linguist uses CPU and tells you why.</p></section>
+      <p id="save-state" class="help" role="status">Settings save automatically.</p>
+    </div>
     <aside class="preview-column"><section class="preview-panel"><div class="preview-header"><span class="eyebrow">YOUR IN-GAME OVERLAY</span><span class="preview-tag">PREVIEW</span></div><div class="game-preview"><div class="map-grid"></div><div class="crosshair"></div><span class="game-coordinate">MID / 01</span><div class="sample-captions"><div class="caption sample-old">Two players coming through mid.</div><div class="caption">Watch your left. I’m covering B.</div></div><span class="preview-footnote">Example captions</span></div><div class="preview-caption">The conversation, without the distraction.</div></section>
-      <section class="panel appearance"><div class="section-heading"><span class="section-number">03</span><h2>Overlay</h2><label class="switch"><input id="show-overlay" type="checkbox" checked aria-label="Show overlay"><span></span></label></div>
+      <section class="panel appearance"><div class="section-heading"><span class="section-number">03</span><h2>Overlay</h2></div>
         <div class="field-header"><label for="font-size">Subtitle size</label><output id="font-value" for="font-size">24px</output></div><input id="font-size" type="range" min="14" max="48" value="24">
         <div class="field-header"><label for="opacity">Background opacity</label><output id="opacity-value" for="opacity">45%</output></div><input id="opacity" type="range" min="0" max="90" value="45">
-        <div class="overlay-actions"><button id="move-overlay" class="button small" type="button">↔ Move overlay</button><button id="reset-overlay" class="text-button" type="button">Reset position</button></div><p class="help">Click-through during play. Unlock to drag or resize, then lock it in place.</p>
+        <div class="overlay-actions"><button id="move-overlay" class="button small" type="button">↔ Move overlay</button><button id="reset-overlay" class="text-button" type="button">Reset position</button></div><p class="help">Start translation to show captions. Pause to hide the overlay. Unlock to drag or resize, then lock it in place.</p>
       </section>
       <div class="privacy-note"><span class="privacy-mark">⌁</span><p><strong>Your audio stays with you.</strong><br>One model download. Fully offline translation.<br>Use CS2 in borderless-windowed mode.</p></div>
-    </aside></div>
+    </aside></form>
     <footer><span><span class="footer-dot"></span> CS2 AUDIO ONLY</span><span id="engine-mode">CPU</span><span id="latency">No audio stored</span><span class="footer-right">BUILT FOR THE NEXT ROUND</span></footer>
   </main>`;
 
@@ -153,17 +171,31 @@ function settingsPage() {
   }
   fillSettings(snapshot.settings); updateModels(snapshot.models); updateProgress(snapshot.download);
   $<HTMLButtonElement>('start').disabled = !snapshot.supported;
-  if (!desktop) for (const id of ['download', 'import', 'import-vad', 'save', 'show-overlay', 'move-overlay', 'reset-overlay']) ($<HTMLButtonElement>(id)).disabled = true;
+  if (!desktop) {
+    $('save-state').textContent = 'Preview only · settings are not saved.';
+    for (const id of ['download', 'import', 'import-vad', 'move-overlay', 'reset-overlay']) $<HTMLButtonElement>(id).disabled = true;
+  }
   $('settings-form').addEventListener('submit', event => { event.preventDefault(); void attempt(save); });
-  $('settings-form').addEventListener('input', () => { $('save-label').textContent = 'Apply changes'; });
-  $('start').onclick = () => void attempt(async () => { if (status.running) await call('stop'); else { await save(); await call('start'); } });
+  $('settings-form').addEventListener('change', () => void attempt(save));
+  $('start').onclick = () => void attempt(async () => {
+    const button = $<HTMLButtonElement>('start');
+    button.disabled = true;
+    try {
+      if (status.running) await call('stop');
+      else {
+        if (!$<HTMLFormElement>('settings-form').reportValidity()) return;
+        await save();
+        await call('start');
+      }
+    } finally { button.disabled = !snapshot.supported; }
+  });
   $('model').onchange = () => updateModels(snapshot.models);
+  for (const id of ['cpu', 'gpu']) $(id).onchange = updateConditionalSettings;
   $('download').onclick = () => void attempt(() => call('download_model', { id: $<HTMLSelectElement>('model').value }));
   $('import').onclick = () => void attempt(() => call('import_model', { id: $<HTMLSelectElement>('model').value }));
   $('import-vad').onclick = () => void attempt(() => call('import_model', { id: 'vad' }));
   $('cancel').onclick = () => void attempt(() => call('cancel_download'));
-  for (const id of ['font-size', 'opacity']) $(id).oninput = () => { updateAppearanceLabels(); $('save-label').textContent = 'Apply changes'; };
-  $('show-overlay').onchange = () => void attempt(() => call('set_overlay_visible', { visible: $<HTMLInputElement>('show-overlay').checked }));
+  for (const id of ['font-size', 'opacity']) $(id).oninput = updateAppearanceLabels;
   $('move-overlay').onclick = () => void attempt(() => call('set_overlay_locked', { locked: !locked }));
   $('reset-overlay').onclick = () => void attempt(() => call('reset_overlay'));
 }
@@ -200,7 +232,12 @@ async function initialize() {
       if (isOverlay) { captions = appendCaption(captions, caption, status, Date.now()); renderCaptions(); }
       else if (status.running && caption.generation === status.generation) $('latency').textContent = `Last caption · ${(caption.latency_ms / 1000).toFixed(1)}s delay`;
     }),
-    on<Settings>('settings', settings => { snapshot.settings = settings; applyAppearance(settings); if (!isOverlay) { fillSettings(settings); updateModels(snapshot.models); } }),
+    on<Settings>('settings', settings => {
+      snapshot.settings = settings;
+      // An acknowledgement for an earlier save must not reset a newer edit.
+      if (isOverlay) applyAppearance(settings);
+      else if (!autosave.pending) { fillSettings(settings); updateModels(snapshot.models); }
+    }),
     on<InstalledModel[]>('models-changed', models => { if (!isOverlay) updateModels(models); }),
     on<DownloadProgress>('model-progress', updateProgress),
     on<boolean>('overlay-locked', updateLock),

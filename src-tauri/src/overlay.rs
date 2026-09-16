@@ -16,9 +16,6 @@ pub fn initialize(app: &tauri::AppHandle) -> tauri::Result<()> {
         let _ = reset_overlay(app.clone());
     }
     let _ = ensure_visible(app);
-    if settings.overlay_visible {
-        window.show()?;
-    }
     Ok(())
 }
 
@@ -105,30 +102,21 @@ pub fn set_overlay_locked(app: tauri::AppHandle, locked: bool) -> Result<(), Str
         .map_err(|e| e.to_string())?;
     window.set_focusable(!locked).map_err(|e| e.to_string())?;
     window.set_resizable(!locked).map_err(|e| e.to_string())?;
-    if !locked {
-        set_overlay_visible(app.clone(), true)?;
-        ensure_visible(&app)?;
-    }
-    let _ = app.emit("overlay-locked", locked);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn set_overlay_visible(app: tauri::AppHandle, visible: bool) -> Result<(), String> {
-    let window = app
-        .get_webview_window("overlay")
-        .ok_or("Overlay unavailable")?;
-    if visible {
+    let running = app
+        .state::<AppState>()
+        .runtime
+        .lock()
+        .unwrap()
+        .status
+        .running;
+    // While paused, show only the positioning preview; locking closes it again.
+    if running || !locked {
         ensure_visible(&app)?;
         window.show()
     } else {
         window.hide()
     }
     .map_err(|e| e.to_string())?;
-    let state = app.state::<AppState>();
-    let mut settings = state.settings.lock().unwrap();
-    settings.overlay_visible = visible;
-    persist(&app, &settings)?;
-    let _ = app.emit("settings", &*settings);
+    let _ = app.emit("overlay-locked", locked);
     Ok(())
 }

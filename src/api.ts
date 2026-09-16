@@ -6,7 +6,7 @@ export const desktop = isTauri();
 export async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (desktop) return invoke<T>(command, args);
   if (command === 'snapshot') return {
-    settings: { backend: 'cpu', model: 'small', language: 'auto', threads: 4, font_size: 24, opacity: 0.45, overlay_visible: true, position: null },
+    settings: { backend: 'cpu', model: 'small', language: 'auto', threads: 4, font_size: 24, opacity: 0.45, position: null },
     status: { phase: 'paused', message: 'Ready when you are', backend: 'cpu', running: false, generation: 0, warning: null },
     models: [{ id: 'small', bytes: 487601967, installed: false }, { id: 'base', bytes: 147951465, installed: false }, { id: 'vad', bytes: 885098, installed: false }],
     download: null, overlay_locked: true, supported: false,

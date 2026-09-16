@@ -3,6 +3,9 @@
 ## Verified locally (macOS, 2026-09-16)
 
 - TypeScript check, Vite production build, and Bun caption lifecycle tests passed.
+- Autosave queue tests passed for rapid edits, ordered persistence, and recovery
+  after a failed write. Browser inspection confirmed automatic preview updates,
+  backend-dependent controls, and removal of Apply and overlay visibility controls.
 - Rust core tests passed: silence/pre-roll/continuous segmentation, bounded queues,
   stale audio, settings validation, stopped/replaced worker results, corrupt and
   truncated model checksums.
@@ -57,12 +60,18 @@ threads, game graphics settings, and the installed app version.
    translations.
 4. **Worker lifecycle:** switch CPU/GPU/model/language while speaking; pause during
    inference, immediately restart, and quit. No old-session caption may appear.
+   Settings must save without an Apply button, survive reopening the app, and
+   preserve the latest value after rapid edits. Slider drags preview immediately
+   and persist on release. Selecting an unavailable model pauses translation and
+   reports the required setup instead of continuing with the previous model.
    Unavailable GPU, missing GPU DLL, and GPU initialization failure must lead to
    a clearly identified CPU fallback. Missing/corrupt models must show an error.
 5. **Overlay:** use borderless CS2, click and aim through captions, verify focus
-   stays in the game, unlock/drag/resize/relock, toggle visibility, close Settings,
+   stays in the game, unlock/drag/resize/relock, start/pause translation, close Settings,
    reopen from the tray, restart the app, and remove a monitor. Test 100%, 150%,
-   and 200% scaling and negative monitor coordinates.
+   and 200% scaling and negative monitor coordinates. Start must show a locked
+   overlay; Pause must hide it, including while moving it. Moving while paused
+   shows a preview that disappears on Lock. App launch must leave it hidden.
 6. **Privacy:** after models are installed, disconnect networking and verify
    translation. Inspect app-data files: settings/models only, no audio/transcripts.
    Caption text containing `<script>` must display literally.

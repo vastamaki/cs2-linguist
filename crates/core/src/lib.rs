@@ -48,7 +48,6 @@ pub struct Settings {
     pub threads: u32,
     pub font_size: u32,
     pub opacity: f64,
-    pub overlay_visible: bool,
     pub position: Option<OverlayPosition>,
 }
 
@@ -62,7 +61,6 @@ impl Default for Settings {
             threads: (cores / 2).clamp(1, 4) as u32,
             font_size: 24,
             opacity: 0.45,
-            overlay_visible: true,
             position: None,
         }
     }

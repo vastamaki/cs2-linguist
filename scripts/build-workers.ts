@@ -10,6 +10,10 @@ const host = version.stdout.toString().match(/^host: (.+)$/m)?.[1];
 const triple = windows ? 'x86_64-pc-windows-msvc' : host!;
 const all = process.argv[2] === 'all';
 if (all && !windows) throw new Error('The CPU + Vulkan installer must be built on Windows x64. Use the cpu argument for local benchmarks.');
+// Cargo resolves CARGO_TARGET_DIR and .cargo/config.toml for us.
+const metadata = Bun.spawnSync(['cargo', 'metadata', '--locked', '--no-deps', '--format-version', '1'], { cwd: root, stderr: 'inherit' });
+if (metadata.exitCode) throw new Error('Could not resolve the Cargo build directory.');
+const targetDirectory: string = JSON.parse(metadata.stdout.toString()).target_directory;
 await mkdir(join(root, 'src-tauri', 'binaries'), { recursive: true });
 for (const mode of all ? ['cpu', 'gpu'] : ['cpu']) {
   const args = ['cargo', 'build', '--locked', '--release', '-p', 'linguist-worker', '--target', triple];
@@ -22,5 +26,5 @@ for (const mode of all ? ['cpu', 'gpu'] : ['cpu']) {
   } });
   if (await child.exited) throw new Error(`${mode} worker build failed.`);
   const extension = windows ? '.exe' : '';
-  await copyFile(join(root, 'target', triple, 'release', `linguist-worker${extension}`), join(root, 'src-tauri', 'binaries', `linguist-worker-${mode}-${triple}${extension}`));
+  await copyFile(join(targetDirectory, triple, 'release', `linguist-worker${extension}`), join(root, 'src-tauri', 'binaries', `linguist-worker-${mode}-${triple}${extension}`));
 }

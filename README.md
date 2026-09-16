@@ -13,13 +13,16 @@ still required; no Windows installer has been produced on the macOS development 
 1. Start Linguist and download **Whisper small** (about 465 MiB) or **base**
    (about 141 MiB). The download also includes the 865 KiB Silero speech detector.
 2. Leave the source language on automatic, or choose Russian for short callouts.
-3. Choose CPU or GPU, apply changes, and click **Start translation**. The app waits
-   for `cs2.exe` and reconnects when the game restarts.
+3. Choose CPU or GPU and click **Start translation**. Settings save automatically;
+   sliders preview immediately and save when released. Start shows the overlay;
+   **Pause translation** stops capture and hides it. The app waits for `cs2.exe`
+   and reconnects when the game restarts.
 4. Use **Move overlay** to drag/resize the caption window, then **Lock overlay**.
    The locked overlay passes mouse input to the game without taking focus.
+   You can position the overlay while paused; locking closes that preview.
 5. Closing Settings leaves Linguist in the tray. Use **Quit Linguist** to exit.
 
-The tray also controls Start/Pause, CPU/GPU mode, visibility, position, and Settings.
+The tray also controls Start/Pause, CPU/GPU mode, position, and Settings.
 The Settings status shows the **actual** backend, including the reason for a GPU
 fallback. CPU is the initial default. Each backend/model/language/thread change
 restarts the worker and discards pending captions.
@@ -36,14 +39,20 @@ Install these build prerequisites:
 
 - [Bun](https://bun.sh/), and stable [Rust](https://rustup.rs/) with the MSVC target.
 - Visual Studio Build Tools with **Desktop development with C++** and Windows SDK.
-- CMake and LLVM/libclang. Set `LIBCLANG_PATH` to the directory containing
+- CMake, Ninja, and LLVM/libclang. Set `LIBCLANG_PATH` to the directory containing
   `libclang.dll` if it is not discovered automatically.
 - Microsoft Edge WebView2 (normally already installed on Windows 11).
 - For GPU builds: [Vulkan SDK](https://vulkan.lunarg.com/) with `VULKAN_SDK` set.
 
-Run in a Developer PowerShell or terminal with the MSVC toolchain available:
+Run in **Developer PowerShell for VS 2022** with the x64 MSVC toolchain available.
+Use a short Cargo output path: Whisper's nested Vulkan shader-generator build can
+exceed Windows path limits even when the main C++ build succeeds.
 
 ```powershell
+$env:CARGO_TARGET_DIR = 'C:/t'
+$env:CMAKE_GENERATOR = 'Ninja'
+$env:CC = 'cl'
+$env:CXX = 'cl'
 bun install --frozen-lockfile
 bun run desktop
 ```
@@ -63,18 +72,25 @@ SDK, Bun, Rust, Python, or an API key.
 
 ## Build the Windows installer
 
+From the same configured Developer PowerShell:
+
 ```powershell
 bun run package:windows
 ```
 
 This builds both workers, builds the frontend, and bundles them into an NSIS
-installer under `target/x86_64-pc-windows-msvc/release/bundle/nsis/`.
+installer under `$env:CARGO_TARGET_DIR/x86_64-pc-windows-msvc/release/bundle/nsis/`
+(`C:/t/x86_64-pc-windows-msvc/release/bundle/nsis/` with the setup above).
 The installer includes neither speech models nor a GPU driver. Tauri's standard
 WebView2 setup may require a network connection if WebView2 is absent.
 
 The [Windows workflow](.github/workflows/windows.yml) runs checks and builds the
-installer artifact on `windows-2022`. It has not been dispatched from this local
-workspace. Distribution signing and automatic updates are not configured.
+installer artifact on `windows-2022`. It activates x64 MSVC, uses Ninja and the
+short output path `D:/t`, and uploads `linguist-windows-x64` on success. If a native
+build fails, `windows-cmake-diagnostics` contains the available CMake configure
+logs, including the nested shader-generator compiler checks. This build fix still
+needs a successful Windows run. Distribution signing and automatic updates are
+not configured.
 
 ## Preview on macOS / in a browser
 

@@ -8,21 +8,38 @@ permissions:
 jobs:
   windows:
     runs-on: windows-2022
+    env:
+      # Vulkan's nested shader-generator build otherwise exceeds MAX_PATH.
+      CARGO_TARGET_DIR: D:/t
+      CMAKE_GENERATOR: Ninja
+      CC: cl
+      CXX: cl
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.2'
       - uses: dtolnay/rust-toolchain@stable
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
       - uses: Swatinem/rust-cache@v2
+        with:
+          # rust-cache resolves this relative to D:/a/<repo>/<repo>.
+          workspaces: '. -> ../../../t'
+          key: windows-ninja-v1
       - name: Native build prerequisites
         shell: pwsh
         run: |
-          choco install vulkan-sdk --yes --no-progress
+          choco install vulkan-sdk ninja --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'Native build prerequisite installation failed.' }
           $sdk = (Get-ChildItem C:\VulkanSDK -Directory | Sort-Object Name -Descending | Select-Object -First 1).FullName
           "VULKAN_SDK=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Append
           "$sdk\Bin" | Out-File -FilePath $env:GITHUB_PATH -Append
           "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Check native build tools
+        shell: pwsh
+        run: Get-Command cl.exe, link.exe, cmake.exe, ninja.exe, glslc.exe | Select-Object Name, Source
       - run: bun install --frozen-lockfile
       - run: bun run build
       - run: bun test
@@ -32,5 +49,14 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: linguist-windows-x64
-          path: target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          path: ${{ env.CARGO_TARGET_DIR }}/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
           if-no-files-found: error
+      - name: Upload CMake diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-cmake-diagnostics
+          path: |
+            ${{ env.CARGO_TARGET_DIR }}/**/CMakeConfigureLog.yaml
+            ${{ env.CARGO_TARGET_DIR }}/**/CMakeError.log
+          if-no-files-found: ignore

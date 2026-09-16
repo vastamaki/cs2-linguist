@@ -1,7 +1,7 @@
 export type Backend = 'cpu' | 'gpu';
 export interface Settings {
   backend: Backend; model: 'base' | 'small'; language: string; threads: number;
-  font_size: number; opacity: number; overlay_visible: boolean;
+  font_size: number; opacity: number;
   position: { x: number; y: number; width: number; height: number } | null;
 }
 export interface EngineStatus {
