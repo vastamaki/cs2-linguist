@@ -10,6 +10,10 @@
   stale audio, settings validation, stopped/replaced worker results, corrupt and
   truncated model checksums.
 - `cargo check` and `cargo build` succeeded for the native Tauri app and CPU worker.
+- A Windows-targeted clang-cl/CMake object-only check reproduced the mixed CRT
+  configuration: legacy flags selected the DLL runtime despite `-MT`; setting
+  `CMP0091=NEW` and `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded` compiled both C and
+  C++ with the static runtime. This checks compiler flags, not Windows linking.
 - Native macOS debug app bundle was produced as a UI test artifact, not a supported
   game-capture release. Automated native interaction was blocked by desktop-tool
   app access approval; tray/overlay interactions are not marked verified.

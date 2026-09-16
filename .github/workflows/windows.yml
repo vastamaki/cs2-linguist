@@ -27,7 +27,8 @@ jobs:
         with:
           # rust-cache resolves this relative to D:/a/<repo>/<repo>.
           workspaces: '. -> ../../../t'
-          key: windows-ninja-v1
+          # Do not restore Whisper objects built with the previous DLL runtime.
+          key: windows-ninja-static-crt-v2
       - name: Native build prerequisites
         shell: pwsh
         run: |
@@ -46,6 +47,20 @@ jobs:
       - run: cargo test -p linguist-core --locked
       - run: cargo fmt --all --check
       - run: bun run package:windows
+      - name: Verify worker runtime dependencies
+        shell: pwsh
+        run: |
+          foreach ($mode in 'cpu', 'gpu') {
+            $worker = "src-tauri/binaries/linguist-worker-$mode-x86_64-pc-windows-msvc.exe"
+            $dependencies = & dumpbin /DEPENDENTS $worker | Out-String
+            if ($LASTEXITCODE -ne 0) { throw "Could not inspect $worker" }
+            Write-Output $dependencies
+            if ($dependencies -match '(?im)^\s*(?:MSVCP\d+\w*|VCRUNTIME\d+\w*|MSVCRT\w*|UCRTBASE\w*|api-ms-win-crt-[\w-]+)\.dll\s*$') {
+              throw "$worker must use the static MSVC runtime."
+            }
+            if ($mode -eq 'cpu' -and $dependencies -match '(?i)vulkan-1\.dll') {
+              throw 'The CPU worker must not depend on Vulkan.'
+            }
       - uses: actions/upload-artifact@v4
         with:
           name: linguist-windows-x64

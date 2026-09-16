@@ -22,7 +22,13 @@ for (const mode of all ? ['cpu', 'gpu'] : ['cpu']) {
     ...process.env,
     // Avoid building a binary that only runs on the build machine's CPU.
     GGML_NATIVE: 'OFF', GGML_AVX512: 'OFF',
-    ...(windows ? { RUSTFLAGS: [process.env.RUSTFLAGS, '-C target-feature=+crt-static'].filter(Boolean).join(' ') } : {}),
+    ...(windows ? {
+      RUSTFLAGS: [process.env.RUSTFLAGS, '-C target-feature=+crt-static'].filter(Boolean).join(' '),
+      // Match Rust's static CRT in Whisper/ggml. With Ninja, CMake's legacy
+      // Release flags otherwise append /MD after cc-rs's /MT.
+      CMAKE_POLICY_DEFAULT_CMP0091: 'NEW',
+      CMAKE_MSVC_RUNTIME_LIBRARY: 'MultiThreaded',
+    } : {}),
   } });
   if (await child.exited) throw new Error(`${mode} worker build failed.`);
   const extension = windows ? '.exe' : '';

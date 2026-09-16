@@ -70,6 +70,16 @@ same source and uses the static MSVC C runtime. The CPU executable does not link
 Vulkan. End users need a compatible graphics driver for GPU mode, not the Vulkan
 SDK, Bun, Rust, Python, or an API key.
 
+Both Rust and Whisper/ggml must use that same runtime. The script sets Rust's
+`+crt-static` together with CMake's `CMP0091=NEW` and
+`CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded` ([CMake runtime selection](https://cmake.org/cmake/help/latest/variable/CMAKE_MSVC_RUNTIME_LIBRARY.html)); Rust's flag alone does not override
+Ninja's legacy CMake `/MD` flags. When updating an existing local build from the
+old configuration, clear the cached Whisper objects once before rebuilding:
+
+```powershell
+cargo clean -p whisper-rs-sys --release --target x86_64-pc-windows-msvc
+```
+
 ## Build the Windows installer
 
 From the same configured Developer PowerShell:
@@ -86,8 +96,9 @@ WebView2 setup may require a network connection if WebView2 is absent.
 
 The [Windows workflow](.github/workflows/windows.yml) runs checks and builds the
 installer artifact on `windows-2022`. It activates x64 MSVC, uses Ninja and the
-short output path `D:/t`, and uploads `linguist-windows-x64` on success. If a native
-build fails, `windows-cmake-diagnostics` contains the available CMake configure
+short output path `D:/t`, verifies that workers have no MSVC runtime DLL dependency
+and that the CPU worker does not link Vulkan, and uploads `linguist-windows-x64`
+on success. If a native build fails, `windows-cmake-diagnostics` contains the available CMake configure
 logs, including the nested shader-generator compiler checks. This build fix still
 needs a successful Windows run. Distribution signing and automatic updates are
 not configured.
