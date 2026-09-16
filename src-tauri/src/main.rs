@@ -2,6 +2,7 @@
 mod engine;
 mod models;
 mod overlay;
+mod startup;
 
 use engine::Engine;
 use linguist_core::{history::History, Backend, EngineStatus, Settings};
@@ -261,6 +262,8 @@ fn tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 }
 
 fn main() {
+    let startup_log = startup::begin();
+    let setup_log = startup_log.clone();
     // Children inherit this mode: a missing Vulkan DLL must fail back to CPU,
     // not block startup behind a Windows loader/crash dialog.
     #[cfg(windows)]
@@ -275,17 +278,16 @@ fn main() {
             show_settings(app)
         }))
         .plugin(tauri_plugin_dialog::init())
-        .setup(|app| {
+        .setup(move |app| {
+            startup::record(&setup_log, "Loading settings");
             let data = app.path().app_local_data_dir()?;
             std::fs::create_dir_all(data.join("models"))?;
             let settings_path = data.join("settings.json");
-            let first_run = !settings_path.exists();
             let settings = std::fs::read(&settings_path)
                 .ok()
                 .and_then(|s| serde_json::from_slice::<Settings>(&s).ok())
                 .filter(|s| s.validate().is_ok())
                 .unwrap_or_default();
-            let open_app = first_run || cfg!(debug_assertions) || !settings.overlays_enabled;
             app.manage(AppState {
                 settings: Mutex::new(settings),
                 history: Mutex::new(History::default()),
@@ -295,8 +297,17 @@ fn main() {
                 cancel_download: AtomicBool::new(false),
                 data,
             });
+            // Pages immediately invoke snapshot. Register state before creating
+            // any WebViews; Windows can dispatch IPC while creating the next one.
+            for config in &app.config().app.windows {
+                startup::record(&setup_log, &format!("Creating window: {}", config.label));
+                tauri::WebviewWindowBuilder::from_config(app.handle(), config)?.build()?;
+            }
+            startup::record(&setup_log, "Creating tray");
             tray(app.handle())?;
+            startup::record(&setup_log, "Initializing voice overlay");
             overlay::initialize(app.handle(), "overlay")?;
+            startup::record(&setup_log, "Initializing chat overlay");
             overlay::initialize(app.handle(), "chat-overlay")?;
             let monitor_app = app.handle().clone();
             std::thread::spawn(move || loop {
@@ -312,9 +323,7 @@ fn main() {
                     break;
                 }
             });
-            if open_app {
-                show_settings(app.handle());
-            }
+            show_settings(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -350,7 +359,10 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .expect("Could not initialize Linguist")
-        .run(|app, event| {
+        .run(move |app, event| {
+            if matches!(event, tauri::RunEvent::Ready) {
+                startup::record(&startup_log, "Startup complete");
+            }
             if matches!(event, tauri::RunEvent::Exit) {
                 engine::stop(app, Engine::Voice);
                 engine::stop(app, Engine::Chat);

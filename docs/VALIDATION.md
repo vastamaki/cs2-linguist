@@ -2,6 +2,13 @@
 
 ## Verified locally (macOS, 2026-09-16)
 
+- Startup repair: app build and Clippy passed. The native macOS debug process
+  created all three windows, initialized the tray and overlays, reached Ready,
+  and stayed running. An isolated panic probe verified the diagnostic log; the
+  native error-dialog module passed a Windows-target Rust check. Full Windows
+  app compilation on this Mac stopped at missing Windows C headers in `ring`.
+  The Windows release startup/reopening check was added to CI but has not run
+  locally. The reported installed Windows failure is not yet reproduced.
 - TypeScript check, Vite production build, and Bun caption lifecycle tests passed.
 - Autosave queue tests passed for rapid edits, ordered persistence, and recovery
   after a failed write. Browser inspection confirmed automatic preview updates,
@@ -135,6 +142,9 @@ a Windows 11 x64 machine. Record CPU, GPU/driver, RAM, display scale, model,
 threads, game graphics settings, and the installed app version.
 
 1. **Clean installation:** start on a PC with no Bun/Rust/Python/Vulkan SDK.
+   Confirm the main window opens on both first launch and subsequent launches.
+   For startup failure, collect `%LOCALAPPDATA%\dev.linguist.cs2\startup.log`
+   and the native error dialog (or Reliability Monitor details if there is no log).
    Confirm CPU mode works without a Vulkan driver. Download base, small, medium,
    and large-v3 (the last two require more disk space and memory);
    verify cancellation, retry, corrupted imports, local import, and offline restart.
@@ -169,7 +179,8 @@ threads, game graphics settings, and the installed app version.
    actual CPU/GPU backend. Readings must clear after expiry, stop, restart, and
    game/device reconnection; CPU fallback must say CPU even when GPU is selected.
 6. **Privacy:** after models are installed, disconnect networking and verify
-   translation. Inspect app-data files: settings/models only, no audio/transcripts.
+   translation. Inspect app-data files: settings/models, WebView cache, and startup
+   diagnostics only, no audio/transcripts.
    Caption text containing `<script>` must display literally.
 7. **Text chat:** add `-condebug` to existing Steam launch options, restart CS2,
    and choose its actual `game/csgo/console.log`. Verify all-chat, CT/T team chat,

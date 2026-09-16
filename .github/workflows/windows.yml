@@ -68,6 +68,16 @@ jobs:
               throw 'CPU workers must not depend on Vulkan.'
             }
           }
+      - name: Check release app startup and reopening
+        shell: pwsh
+        run: ./scripts/check-startup.ps1 -Executable "$env:CARGO_TARGET_DIR/x86_64-pc-windows-msvc/release/linguist.exe"
+      - name: Upload startup diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-startup-diagnostics
+          path: ~/AppData/Local/dev.linguist.cs2/startup.log
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
           name: linguist-windows-x64

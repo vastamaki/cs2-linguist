@@ -23,7 +23,8 @@ still required; no Windows installer has been produced on the macOS development 
 4. Use **Move voice overlay** to drag/resize the caption window, then **Lock overlay**.
    The locked overlay passes mouse input to the game without taking focus.
    You can position the overlay while paused; locking closes that preview.
-5. Closing Settings leaves Linguist in the tray. Use **Quit Linguist** to exit.
+5. Launching Linguist opens its main window. Closing Settings leaves Linguist in
+   the tray; launching it again reopens the window. Use **Quit Linguist** to exit.
 
 The tray also controls Start/Pause, CPU/GPU mode, position, and Settings.
 The Settings status shows the **actual** backend, including the reason for a GPU
@@ -186,11 +187,24 @@ WebView2 setup may require a network connection if WebView2 is absent.
 The [Windows workflow](.github/workflows/windows.yml) runs checks and builds the
 installer artifact on `windows-2022`. It activates x64 MSVC, uses Ninja and the
 short output path `D:/t`, verifies that workers have no MSVC runtime DLL dependency
-and that CPU workers do not link Vulkan, and uploads `linguist-windows-x64`
+and that CPU workers do not link Vulkan, checks release startup and reopening,
+and uploads `linguist-windows-x64`
 on success. If a native build fails, `windows-cmake-diagnostics` contains the available CMake configure
 logs, including the nested shader-generator compiler checks. This build fix still
 needs a successful Windows run. Distribution signing and automatic updates are
 not configured.
+
+### If the installed app does not open
+
+Builds with startup diagnostics show a native Windows dialog for Rust startup
+errors, even when the app's WebView cannot open. The latest launch also writes
+initialization stages and unhandled Rust errors to
+`%LOCALAPPDATA%\dev.linguist.cs2\startup.log`. This file is replaced on launch;
+audio and translation events are not logged. Include this log when reporting a
+startup failure. If no new log appears, Windows may be preventing execution or
+the executable may be failing before Rust starts; check Windows Security's
+Protection history and Reliability Monitor (`Win+R` → `perfmon /rel`) for details.
+Do not delete the entire app-data folder: it contains downloaded models.
 
 ## Preview on macOS / in a browser
 

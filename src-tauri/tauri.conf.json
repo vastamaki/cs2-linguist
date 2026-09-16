@@ -12,9 +12,9 @@
   "app": {
     "macOSPrivateApi": true,
     "windows": [
-      { "label": "settings", "title": "Linguist — CS2 captions", "width": 940, "height": 780, "minWidth": 720, "minHeight": 640, "backgroundColor": "#111411", "visible": false },
-      { "label": "overlay", "url": "index.html?overlay", "title": "Linguist captions", "width": 720, "height": 230, "transparent": true, "decorations": false, "shadow": false, "alwaysOnTop": true, "skipTaskbar": true, "focus": false, "focusable": false, "resizable": false, "visible": false },
-      {"label": "chat-overlay", "url": "index.html?chat-overlay", "title": "Linguist chat", "width": 480, "height": 320, "transparent": true, "decorations": false, "shadow": false, "alwaysOnTop": true, "skipTaskbar": true, "focus": false, "focusable": false, "resizable": false, "visible": false}
+      { "label": "settings", "create": false, "title": "Linguist — CS2 captions", "width": 940, "height": 780, "minWidth": 720, "minHeight": 640, "backgroundColor": "#111411", "visible": false },
+      { "label": "overlay", "create": false, "url": "index.html?overlay", "title": "Linguist captions", "width": 720, "height": 230, "transparent": true, "decorations": false, "shadow": false, "alwaysOnTop": true, "skipTaskbar": true, "focus": false, "focusable": false, "resizable": false, "visible": false },
+      {"label": "chat-overlay", "create": false, "url": "index.html?chat-overlay", "title": "Linguist chat", "width": 480, "height": 320, "transparent": true, "decorations": false, "shadow": false, "alwaysOnTop": true, "skipTaskbar": true, "focus": false, "focusable": false, "resizable": false, "visible": false}
     ],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data:; connect-src ipc: http://ipc.localhost"
