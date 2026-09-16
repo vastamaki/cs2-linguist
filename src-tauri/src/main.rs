@@ -4,7 +4,7 @@ mod models;
 mod overlay;
 
 use engine::Engine;
-use linguist_core::{Backend, EngineStatus, Settings};
+use linguist_core::{history::History, Backend, EngineStatus, Settings};
 use serde::Serialize;
 use std::{
     path::PathBuf,
@@ -14,6 +14,7 @@ use tauri::{Emitter, Manager};
 
 struct AppState {
     settings: Mutex<Settings>,
+    history: Mutex<History>,
     runtime: Mutex<engine::Runtime>,
     chat_runtime: Mutex<engine::Runtime>,
     download: Mutex<Option<models::DownloadProgress>>,
@@ -24,6 +25,7 @@ struct AppState {
 #[derive(Serialize)]
 struct Snapshot {
     settings: Settings,
+    history: History,
     status: EngineStatus,
     chat_status: EngineStatus,
     chat_overlay_locked: bool,
@@ -38,10 +40,16 @@ struct Snapshot {
 #[tauri::command]
 fn snapshot(app: tauri::AppHandle) -> Snapshot {
     let state = app.state::<AppState>();
+    // Read independently; worker publication holds its runtime lock before history.
+    let settings = state.settings.lock().unwrap().clone();
+    let status = state.runtime.lock().unwrap().status.clone();
+    let chat_status = state.chat_runtime.lock().unwrap().status.clone();
+    let history = state.history.lock().unwrap().clone();
     let snapshot = Snapshot {
-        settings: state.settings.lock().unwrap().clone(),
-        status: state.runtime.lock().unwrap().status.clone(),
-        chat_status: state.chat_runtime.lock().unwrap().status.clone(),
+        settings,
+        history,
+        status,
+        chat_status,
         chat_overlay_locked: !app
             .get_webview_window("chat-overlay")
             .map(|w| w.is_resizable().unwrap_or(false))
@@ -79,12 +87,17 @@ fn save_settings(app: tauri::AppHandle, mut settings: Settings) -> Result<(), St
         let changed = (
             current.engine_changed(&settings),
             current.chat.engine_changed(&settings.chat),
+            current.overlays_enabled != settings.overlays_enabled,
         );
         persist(&app, &settings)?;
         *current = settings.clone();
         changed
     };
     let _ = app.emit("settings", &settings);
+    if changed.2 {
+        overlay::set_overlay_locked(app.clone(), true, None)?;
+        overlay::set_overlay_locked(app.clone(), true, Some("chat-overlay".into()))?;
+    }
     let running = state.runtime.lock().unwrap().status.running
         || state.chat_runtime.lock().unwrap().status.running;
     if running {
@@ -138,6 +151,9 @@ fn start(app: tauri::AppHandle) -> Result<(), String> {
     })();
     if result.is_err() {
         let _ = stop(app);
+    } else if !settings.overlays_enabled {
+        show_settings(&app);
+        let _ = app.emit("show-translations", ());
     }
     result
 }
@@ -269,8 +285,10 @@ fn main() {
                 .and_then(|s| serde_json::from_slice::<Settings>(&s).ok())
                 .filter(|s| s.validate().is_ok())
                 .unwrap_or_default();
+            let open_app = first_run || cfg!(debug_assertions) || !settings.overlays_enabled;
             app.manage(AppState {
                 settings: Mutex::new(settings),
+                history: Mutex::new(History::default()),
                 runtime: Mutex::new(engine::Runtime::default()),
                 chat_runtime: Mutex::new(engine::Runtime::default()),
                 download: Mutex::new(None),
@@ -294,7 +312,7 @@ fn main() {
                     break;
                 }
             });
-            if first_run || cfg!(debug_assertions) {
+            if open_app {
                 show_settings(app.handle());
             }
             Ok(())

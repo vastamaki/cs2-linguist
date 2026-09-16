@@ -32,13 +32,29 @@ fn status(phase: &str, message: &str) {
 }
 
 fn source_language(text: &str, setting: &str) -> String {
+    // English chat must pass through even when another source language is selected.
+    // With a fixed source, compare only that language and English. In particular,
+    // Latin-script callouts must not be sent to the model as Russian.
+    let fixed = isolang::Language::from_639_1(setting)
+        .and_then(|language| whatlang::Lang::from_code(language.to_639_3()));
+    let detected = if let Some(language) = fixed {
+        whatlang::Detector::with_allowlist(vec![language, whatlang::Lang::Eng]).detect(text)
+    } else {
+        whatlang::detect(text)
+    };
+    if detected
+        .as_ref()
+        .is_some_and(|info| info.lang() == whatlang::Lang::Eng)
+    {
+        return "en".into();
+    }
     if setting != "auto" {
         return setting.into();
     }
     if text.chars().filter(|c| c.is_alphabetic()).count() < 4 {
         return "unknown".into();
     }
-    whatlang::detect(text)
+    detected
         .and_then(|info| isolang::Language::from_639_3(info.lang().code()))
         .and_then(|lang| lang.to_639_1())
         .filter(|code| LANGUAGES.split_whitespace().any(|l| l == *code))
@@ -304,5 +320,15 @@ mod tests {
         );
         assert_eq!(source_language("gg", "auto"), "unknown");
         assert_eq!(source_language("да", "ru"), "ru");
+        assert_eq!(source_language("go B", "ru"), "en");
+        assert_eq!(source_language("gg", "ru"), "en");
+        assert_eq!(
+            source_language("Zwei Spieler kommen durch die Mitte.", "de"),
+            "de"
+        );
+        assert_eq!(
+            source_language("Please come with me to the bomb site.", "ru"),
+            "en"
+        );
     }
 }

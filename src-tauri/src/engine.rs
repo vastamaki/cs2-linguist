@@ -263,10 +263,9 @@ fn launch(
             match event {
                 WorkerEvent::Chat { mut caption } if kind == Engine::Chat => {
                     caption.generation = generation;
-                    let _ = app.emit("chat-caption", caption);
-                }
-                WorkerEvent::ChatReset if kind == Engine::Chat => {
-                    let _ = app.emit("chat-reset", generation);
+                    let mut history = state.history.lock().unwrap();
+                    history.record_chat(caption);
+                    let _ = app.emit("translation-history", &*history);
                 }
                 WorkerEvent::Chat { .. } | WorkerEvent::ChatReset => {}
 
@@ -282,17 +281,18 @@ fn launch(
                     latency_ms,
                     inference_ms,
                 } => {
-                    let _ = app.emit(
-                        "caption",
-                        Caption {
-                            id,
-                            generation,
-                            text,
-                            language,
-                            latency_ms,
-                            inference_ms,
-                        },
-                    );
+                    let caption = Caption {
+                        id,
+                        generation,
+                        text,
+                        language,
+                        latency_ms,
+                        inference_ms,
+                    };
+                    let _ = app.emit("caption", &caption);
+                    let mut history = state.history.lock().unwrap();
+                    history.record_voice(caption);
+                    let _ = app.emit("translation-history", &*history);
                 }
                 WorkerEvent::Error { message } => {
                     error_message = Some(message);

@@ -80,7 +80,8 @@ to assess the decoding and larger models together.
   Stop exits successfully. Log fixtures contain only synthetic test messages.
 - Browser inspection verified conditional voice/chat controls, the in-app
   `-condebug` instructions and disk-log notice, both model choices/sizes, separate
-  written-language selection, original-text toggle, and automatic preview updates.
+  written-language selection and automatic preview updates. The original-text
+  toggle was subsequently removed for the rolling-chat layout below.
   This does not validate the native overlay's focus/click-through behavior.
 
 Individual CLI smoke calls used two CPU threads, four-beam decoding, and a loaded
@@ -97,13 +98,35 @@ Automatic detection preserved the English fixture unchanged. For “Привет
 both nevertheless produced “Let’s go to point B.” (772 / 1659 ms). The detector is
 shared by both choices: a larger translation model does **not** fix language
 identification. This is why the UI recommends a fixed Russian source when
-appropriate and can show the original text. Finnish movement semantics were also
+appropriate. Original messages can be checked in CS2 itself. Finnish movement semantics were also
 imperfect. No CS2 slang accuracy claim follows from these few clean sentences.
 
 Two back-to-back Russian log messages accumulated extra queue delay. In one
 integration run, read-to-caption times were 587 / 1084 ms for 418M and 1713 /
 3121 ms for 1.2B. These omit up to 150 ms log-polling delay and exclude model load;
 they do not measure Windows CPU use, memory, game frame times, or live CS2 logs.
+
+## Rolling history and in-app view (macOS, 2026-09-16)
+
+- Core tests verify independent ten-message limits for chat and voice, FIFO
+  eviction on the eleventh message, repeated messages, and retention across new
+  worker generations. Completed history belongs to the app, not to a worker or
+  webview, and is never serialized to settings or disk.
+- The visibility check covers running/paused and locked/unlocked combinations:
+  in-app-only mode hides both overlays in every case. Existing settings migrate
+  with overlays enabled; old `show_original` values are ignored. Changing display
+  mode does not restart either engine.
+- Frontend checks cover literal `[channel] player: text` formatting, English
+  passthrough rows, and rejection of older history snapshots after newer events.
+  The chat worker checks English passthrough with a fixed Russian source.
+- Browser inspection verifies the Display selector, conditional overlay controls,
+  Settings/Translations navigation, equal-width scrollable panes, unchanged English
+  example messages and removal of original-text duplicates. Chat history has no
+  expiry timer. The voice overlay retains its previous eight-second expiry.
+- Windows acceptance must additionally verify switching display mode while
+  translating or moving an overlay, keeping completed messages across Pause/Start
+  and model changes, collecting messages while Settings is hidden, preserving
+  history when moving between pages, and clearing it only after quitting the app.
 
 ## Required Windows acceptance
 
@@ -156,12 +179,12 @@ threads, game graphics settings, and the installed app version.
    is skipped on Start. Test log rotation/truncation, missing-file recreation,
    permission errors, repeated identical lines, and unrelated console spam.
    Download/import both text models; reject missing or modified files, cancel
-   midway, retry, and restart offline. Compare Auto/Russian and keep original
-   messages visible when assessing slang and typos. Verify text CPU operation on a
+   midway, retry, and restart offline. Compare Auto/Russian and use the original in-game chat
+   when assessing slang and typos. Verify text CPU operation on a
    PC without Vulkan, including simultaneous GPU voice translation.
    Enable voice only, chat only, then both. Switch the chat model while voice is
    active and vice versa; only the affected worker should restart. Pause/Start
-   during inference must discard old messages. Move/resize/lock each overlay,
+   during inference must discard pending old results, while completed history stays. Move/resize/lock each overlay,
    check focus, DPI and monitor restoration, and persist both positions.
    With `-condebug`, **CS2 writes a raw console log**; this is expected. Linguist
    should only read it and never create a translated transcript. Test literal

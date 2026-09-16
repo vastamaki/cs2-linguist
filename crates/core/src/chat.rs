@@ -17,7 +17,6 @@ pub struct ChatSettings {
     pub language: String,
     pub log_path: String,
     pub threads: u32,
-    pub show_original: bool,
     pub position: Option<OverlayPosition>,
 }
 impl Default for ChatSettings {
@@ -28,7 +27,6 @@ impl Default for ChatSettings {
             language: "auto".into(),
             log_path: String::new(),
             threads: 2,
-            show_original: true,
             position: None,
         }
     }
@@ -216,7 +214,7 @@ mod tests {
         assert!(!original.engine_changed(&changed));
         assert!(original.chat.engine_changed(&changed.chat));
         let mut appearance = changed.clone();
-        appearance.chat.show_original = false;
+        appearance.overlays_enabled = false;
         assert!(!changed.chat.engine_changed(&appearance.chat));
         appearance.chat.model = "small".into();
         assert!(appearance.validate().is_err());

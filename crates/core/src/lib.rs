@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod chat;
+pub mod history;
 pub mod models;
 
 use serde::{Deserialize, Serialize};
@@ -44,6 +45,7 @@ impl OverlayPosition {
 #[serde(default)]
 pub struct Settings {
     pub voice_enabled: bool,
+    pub overlays_enabled: bool,
     pub chat: chat::ChatSettings,
     pub backend: Backend,
     pub model: String,
@@ -59,6 +61,7 @@ impl Default for Settings {
         let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
         Self {
             voice_enabled: true,
+            overlays_enabled: true,
             chat: chat::ChatSettings::default(),
             backend: Backend::Cpu,
             model: "small".into(),
@@ -76,6 +79,9 @@ impl Default for Settings {
 pub const LANGUAGES: &str = "auto en zh de es ru ko fr ja pt tr pl ca nl ar sv it id hi fi vi he uk el ms cs ro da hu ta no th ur hr bg lt la mi ml cy sk te fa lv bn sr az sl kn et mk br eu is hy ne mn bs kk sq sw gl mr pa si km sn yo so af oc ka be tg sd gu am yi lo uz fo ht ps tk nn mt sa lb my bo tl mg as tt haw ln ha ba jw su";
 
 impl Settings {
+    pub fn show_overlay(&self, running: bool, locked: bool) -> bool {
+        self.overlays_enabled && (running || !locked)
+    }
     pub fn validate(&self) -> Result<(), String> {
         self.chat.validate()?;
         if !models::MODELS

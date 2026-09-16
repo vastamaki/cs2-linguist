@@ -1,8 +1,8 @@
 import { call, desktop, on } from './api';
-import { appendCaption, languageName } from './captions';
-import type { ChatCaption, ChatSettings, EngineStatus, InstalledModel, Settings, Snapshot } from './types';
+import { languageName, latestHistory, renderHistory } from './captions';
+import type { ChatSettings, EngineStatus, InstalledModel, Settings, Snapshot, TranslationHistory } from './types';
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
-export const chatPreview = `<section id="chat-preview" class="preview-panel" hidden><div class="preview-header"><span class="eyebrow">TEXT CHAT OVERLAY</span><span class="preview-tag">PREVIEW</span></div><div class="chat-preview-scene"><div class="caption-panel"><header class="caption-header"><div class="caption-heading"><span>TEXT CHAT → ENGLISH</span><span id="chat-preview-model">CPU · 418M</span></div><dl class="caption-stats"><div><dt>Written</dt><dd id="chat-preview-language">Auto</dd></div><div><dt>Last language</dt><dd>Russian</dd></div><div><dt>Delay</dt><dd>1.2 s</dd></div></dl></header><div class="caption-content"><article class="chat-message"><div class="chat-message-meta">[CT] Player · Russian</div><div class="chat-message-text">Let's go to B together.</div><div id="chat-preview-original" class="chat-original">Давайте пойдём вместе на B.</div></article></div></div><p class="help">Example message and timing</p></div></section>`;
+export const chatPreview = `<section id="chat-preview" class="preview-panel" hidden><div class="preview-header"><span class="eyebrow">CHAT WINDOW</span><span class="preview-tag">PREVIEW</span></div><div class="chat-preview-scene"><div class="caption-panel"><header class="caption-header"><div class="caption-heading"><span>TEXT CHAT → ENGLISH</span><span id="chat-preview-model">CPU · 418M</span></div><dl class="caption-stats"><div><dt>Written</dt><dd id="chat-preview-language">Auto</dd></div><div><dt>Last language</dt><dd>Russian</dd></div><div><dt>Delay</dt><dd>1.2 s</dd></div></dl></header><div class="caption-content"><div class="history-message">[CT] Player 1: Let's go to B together.</div><div class="history-message">[T] Player 2: Good luck, have fun!</div></div></div><p class="help">Example message and timing</p></div></section>`;
 export const chatControls = `<section class="panel chat-settings"><div class="section-heading"><span class="section-number">+</span><h2>Text chat</h2><label class="check-label"><input type="checkbox" id="chat-enabled"> Translate chat</label></div>
 <fieldset id="chat-options" class="plain-fieldset" hidden disabled>
   <p class="help">Read CS2 chat locally. Text models are separate from Whisper and run on CPU.</p>
@@ -14,8 +14,8 @@ export const chatControls = `<section class="panel chat-settings"><div class="se
   <div class="download-box"><strong id="chat-model-size"></strong><button id="download-chat" class="button small" type="button">Download text model</button><button id="import-chat" class="text-button" type="button">Import model folder</button></div>
   <div class="field-header"><label for="chat-language">Written language</label></div><select id="chat-language"></select><p class="help">Auto detects each message separately. Select Russian for mostly Russian chat; short messages and slang can confuse detection.</p>
   <div class="thread-row"><div><label for="chat-threads">Chat CPU threads</label><p class="help">Independent of voice processing.</p></div><input id="chat-threads" type="number" required min="1" max="8" value="2"></div>
-  <label class="check-label original-option"><input id="chat-original" type="checkbox" checked> Show original text below translations</label>
-  <div class="overlay-actions"><button id="move-chat" class="button small" type="button">↔ Move chat overlay</button><button id="reset-chat" class="text-button" type="button">Reset position</button></div>
+  <p class="help">The latest 10 messages stay until replaced. English messages stay unchanged; translations appear without the original text.</p>
+  <div id="chat-overlay-actions" class="overlay-actions"><button id="move-chat" class="button small" type="button">↔ Move chat overlay</button><button id="reset-chat" class="text-button" type="button">Reset position</button></div>
 </fieldset></section>`;
 
 export function fillChat(settings: ChatSettings) {
@@ -24,20 +24,20 @@ export function fillChat(settings: ChatSettings) {
   $<HTMLSelectElement>('chat-language').value = settings.language;
   $<HTMLInputElement>('chat-log').value = settings.log_path;
   $<HTMLInputElement>('chat-threads').value = String(settings.threads);
-  $<HTMLInputElement>('chat-original').checked = settings.show_original;
   updateChatControls();
 }
 export function readChat(previous: ChatSettings): ChatSettings {
   const threads = Number($<HTMLInputElement>('chat-threads').value);
-  return { ...previous, enabled: $<HTMLInputElement>('chat-enabled').checked, model: $<HTMLSelectElement>('chat-model').value as ChatSettings['model'], language: $<HTMLSelectElement>('chat-language').value, log_path: $<HTMLInputElement>('chat-log').value, threads: Number.isInteger(threads) && threads >= 1 && threads <= 8 ? threads : previous.threads, show_original: $<HTMLInputElement>('chat-original').checked };
+  return { ...previous, enabled: $<HTMLInputElement>('chat-enabled').checked, model: $<HTMLSelectElement>('chat-model').value as ChatSettings['model'], language: $<HTMLSelectElement>('chat-language').value, log_path: $<HTMLInputElement>('chat-log').value, threads: Number.isInteger(threads) && threads >= 1 && threads <= 8 ? threads : previous.threads };
 }
 export function updateChatControls() {
   const enabled = $<HTMLInputElement>('chat-enabled').checked;
   $('chat-options').hidden = !enabled; $<HTMLFieldSetElement>('chat-options').disabled = !enabled;
-  $('chat-preview').hidden = !enabled;
+  const overlays = $<HTMLSelectElement>('display-mode').value === 'overlay';
+  $('chat-preview').hidden = !enabled || !overlays;
+  $('chat-overlay-actions').hidden = !overlays;
   $('chat-preview-model').textContent = `CPU · ${$<HTMLSelectElement>('chat-model').value === 'm2m100-418m' ? '418M' : '1.2B'}`;
   $('chat-preview-language').textContent = languageName($<HTMLSelectElement>('chat-language').value);
-  $('chat-preview-original').hidden = !$<HTMLInputElement>('chat-original').checked;
 }
 export function updateChatModels(models: InstalledModel[]) {
   const model = models.find(m => m.id === $<HTMLSelectElement>('chat-model').value)!;
@@ -52,7 +52,7 @@ export function setupChat(snapshot: Snapshot, save: () => Promise<void>, attempt
   fillChat(snapshot.settings.chat); updateChatModels(snapshot.models);
   $('chat-enabled').onchange = updateChatControls;
   $('chat-model').onchange = () => { updateChatModels(snapshot.models); updateChatControls(); };
-  for (const id of ['chat-language', 'chat-original']) $(id).onchange = updateChatControls;
+  $('chat-language').onchange = updateChatControls;
   $('choose-chat-log').onclick = () => void attempt(async () => { const path = await call<string | null>('pick_chat_log'); if (path) { $<HTMLInputElement>('chat-log').value = path; await save(); } });
   $('download-chat').onclick = () => void attempt(() => call('download_model', { id: $<HTMLSelectElement>('chat-model').value }));
   $('import-chat').onclick = () => void attempt(() => call('import_model', { id: $<HTMLSelectElement>('chat-model').value }));
@@ -66,28 +66,26 @@ export function setupChat(snapshot: Snapshot, save: () => Promise<void>, attempt
 
 export async function chatOverlay(root: HTMLElement) {
   document.body.classList.add('overlay-body', 'chat-overlay-body');
-  root.innerHTML = `<div class="overlay-shell"><div id="move-bar" hidden><span id="drag-handle">⠿ Drag chat · resize from edges</span><button id="lock-overlay" type="button">Lock chat</button></div><section class="caption-panel"><header class="caption-header"><div class="caption-heading"><span>TEXT CHAT → ENGLISH</span><span id="chat-engine"></span></div><dl class="caption-stats"><div><dt>Written</dt><dd id="chat-source"></dd></div><div><dt>Last language</dt><dd id="chat-detected">—</dd></div><div title="Time from reading the log message to translation ready"><dt>Delay</dt><dd id="chat-delay">—</dd></div></dl><p id="chat-state" class="help" role="status"></p></header><div id="chat-messages" class="caption-content" aria-live="polite"></div><div id="move-example" class="caption" hidden>Translated chat appears here.</div><div id="error" class="notice error" hidden></div></section></div>`;
+  root.innerHTML = `<div class="overlay-shell"><div id="move-bar" hidden><span id="drag-handle">⠿ Drag chat · resize from edges</span><button id="lock-overlay" type="button">Lock chat</button></div><section class="caption-panel"><header class="caption-header"><div class="caption-heading"><span>TEXT CHAT → ENGLISH</span><span id="chat-engine"></span></div><dl class="caption-stats"><div><dt>Written</dt><dd id="chat-source"></dd></div><div><dt>Last language</dt><dd id="chat-detected">—</dd></div><div title="Time from reading the log message to translation ready"><dt>Delay</dt><dd id="chat-delay">—</dd></div></dl><p id="chat-state" class="help" role="status"></p></header><div id="chat-messages" class="caption-content history-list" role="log" aria-label="Chat translations" aria-live="polite"></div><div id="move-example" class="caption" hidden>Translated chat appears here.</div><div id="error" class="notice error" hidden></div></section></div>`;
   let snapshot = await call<Snapshot>('snapshot'); let status = snapshot.chat_status;
-  let entries: (ChatCaption & { expires: number })[] = [];
+  let history = snapshot.history;
   const appearance = () => { document.documentElement.style.setProperty('--caption-size', `${snapshot.settings.font_size}px`); document.documentElement.style.setProperty('--caption-bg', `rgba(12,17,13,${snapshot.settings.opacity})`); };
   const render = () => {
     $('chat-engine').textContent = `CPU · ${snapshot.settings.chat.model === 'm2m100-418m' ? '418M' : '1.2B'}`;
     $('chat-source').textContent = languageName(snapshot.settings.chat.language);
     $('chat-state').textContent = status.message;
-    const last = entries.at(-1);
+    const recent = history.chat.at(-1);
+    const last = status.running && recent?.generation === status.generation ? recent : undefined;
     $('chat-detected').textContent = last ? languageName(last.language) : '—';
     $('chat-delay').textContent = last ? `${(last.latency_ms / 1000).toFixed(1)} s` : '—';
-    $('chat-messages').replaceChildren(...entries.map(caption => {
-      const item = document.createElement('article'); item.className = 'chat-message';
-      const meta = document.createElement('div'); meta.className = 'chat-message-meta';
-      meta.textContent = `[${caption.channel}] ${caption.player} · ${languageName(caption.language)}${!caption.translated && caption.language !== 'en' ? ' · original' : ''}`;
-      const text = document.createElement('div'); text.className = 'chat-message-text'; text.textContent = caption.text; item.append(meta, text);
-      if (snapshot.settings.chat.show_original && caption.translated) { const original = document.createElement('div'); original.className = 'chat-original'; original.textContent = caption.original; item.append(original); }
-      return item;
-    }));
-    $('chat-messages').scrollTop = $('chat-messages').scrollHeight;
   };
-  const updateStatus = (value: EngineStatus) => { if (value.generation < status.generation) return; if (value.generation !== status.generation || !value.running || ['loading', 'waiting', 'error'].includes(value.phase)) entries = []; status = value; render(); };
+  const updateHistory = (value: TranslationHistory) => {
+    history = latestHistory(history, value);
+    renderHistory($('chat-messages'), history.chat, 'New chat messages appear here. The last 10 stay until replaced.');
+    render();
+  };
+  const updateStatus = (value: EngineStatus) => { if (value.generation < status.generation) return; status = value; render(); };
+
   let locked = true;
   const lock = (value: boolean) => { locked = value; $('move-bar').hidden = value; $('move-example').hidden = value; document.body.classList.toggle('unlocked', !value); };
   $('lock-overlay').onclick = () => { void call('set_overlay_locked', { locked: true, target: 'chat-overlay' }).catch(showError); };
@@ -95,12 +93,10 @@ export async function chatOverlay(root: HTMLElement) {
   function showError(error: unknown) { $('error').textContent = String(error); $('error').hidden = false; }
   await Promise.all([
     on<EngineStatus>('chat-status', updateStatus),
-    on<ChatCaption>('chat-caption', caption => { entries = appendCaption(entries, caption, status, Date.now(), 6, 20000); render(); }),
-    on<number>('chat-reset', generation => { if (generation === status.generation) { entries = []; render(); } }),
+    on<TranslationHistory>('translation-history', updateHistory),
     on<Settings>('settings', settings => { snapshot.settings = settings; appearance(); render(); }),
     on<boolean>('chat-overlay-locked', lock),
     on<string>('app-error', showError),
   ]);
-  snapshot = await call<Snapshot>('snapshot'); appearance(); updateStatus(snapshot.chat_status); lock(snapshot.chat_overlay_locked);
-  setInterval(() => { const remaining = entries.filter(c => c.expires > Date.now()); if (remaining.length !== entries.length) { entries = remaining; render(); } }, 250);
+  snapshot = await call<Snapshot>('snapshot'); appearance(); updateStatus(snapshot.chat_status); updateHistory(snapshot.history); lock(snapshot.chat_overlay_locked);
 }

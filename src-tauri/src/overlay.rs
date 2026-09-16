@@ -121,6 +121,8 @@ pub fn set_overlay_locked(
     target: Option<String>,
 ) -> Result<(), String> {
     let label = label(target.as_deref())?;
+    let settings = app.state::<AppState>().settings.lock().unwrap().clone();
+    let locked = locked || !settings.overlays_enabled;
     let window = app.get_webview_window(label).ok_or("Overlay unavailable")?;
     window
         .set_ignore_cursor_events(locked)
@@ -135,7 +137,7 @@ pub fn set_overlay_locked(
     };
     let running = kind.runtime(&state).lock().unwrap().status.running;
     // While paused, show only the positioning preview; locking closes it again.
-    if running || !locked {
+    if settings.show_overlay(running, locked) {
         ensure_visible(&app, label)?;
         window.show()
     } else {

@@ -5,7 +5,7 @@ Rust, WASAPI application loopback, Silero VAD, whisper.cpp, and CTranslate2.
 
 **Target: Windows 11 x64, CS2 in borderless-windowed mode.** The current source
 implements the capture pipeline, local models, CPU/Vulkan workers, tray controls,
-and two independent transparent movable overlays. Windows gameplay/GPU/installer acceptance is
+and two independent transparent movable overlays plus a split in-app view. Windows gameplay/GPU/installer acceptance is
 still required; no Windows installer has been produced on the macOS development host.
 
 ## Use
@@ -78,9 +78,10 @@ accepted segments using an additional speech-probability-only threshold.
    can be misidentified, including Russian being guessed as Bulgarian. Auto's
    language coverage is smaller than the model's; select other languages manually.
 6. Click **Start translation**. Use **Move chat overlay** to place it, then lock it.
-   It shows the player, channel, English text, optional original, selected/last
-   language, model, and delay from reading the message until translation is ready.
-   At most six messages remain for twenty seconds.
+   Each message is one row: `[CT] Player 1: message`. No original-text duplicate
+   is shown, and English messages are preserved. The header shows selected/last
+   language, model, and read-to-caption delay. The latest **10 messages** remain
+   until replaced: the eleventh removes the first. They do not expire on a timer.
 
 **`-condebug` makes CS2 write console output, including raw player chat, to disk.**
 Linguist reads the chosen file without modifying it; it does not save translations
@@ -89,7 +90,24 @@ log. Existing chat history is skipped on Start; only new complete lines are read
 Missing files are watched, and truncation/recreation clears pending translations.
 Team/all-chat formats `[CT]`, `[T]`, `[ALL]`, and `[TEAM]` are recognized. Changes
 in CS2's log format or localization need validation on the game's current build.
-English and undetected very short messages remain as original text.
+Messages detected as English pass through even when a fixed written language is
+selected. Automatic language detection can still mistake short or mixed messages.
+
+### Use the app without overlays
+
+In **Settings → Display → Translation display**, select **In app only · no
+overlays**. Both overlays hide immediately, including positioning previews;
+translation continues. Open **Translations** to see text chat and voice in two
+independently scrolling, equal-width panes. Start in this mode opens that page.
+You can also open it while overlays are enabled.
+
+Each pane retains its latest 10 messages in memory. Changing pages, pausing,
+restarting a worker, changing models, or switching display modes preserves this
+history. Closing Settings keeps the app and history in the tray; **Quit Linguist**
+clears it. No transcript is written to disk or restored after quitting. Results
+that were still pending when a worker stopped or a log reset remain discarded.
+The display preference is saved automatically and takes effect without reloading
+models. Switch back to **Overlays + in-app page** to use the overlays again.
 
 **Import model folder** accepts the four exact files (`model.bin`, `config.json`,
 `shared_vocabulary.json`, `sentencepiece.bpe.model`) from the selected pinned
@@ -252,7 +270,8 @@ run on separate threads. Results older than ten seconds are discarded both befor
 and after inference. Parent session IDs invalidate stopped/replaced workers;
 capture stream IDs invalidate audio when the game or device disconnects. Caption
 events are deduplicated by ID, not text, so repeated callouts remain meaningful.
-Captions expire after eight seconds and at most three are retained.
+Voice overlay captions expire after eight seconds and at most three are visible.
+The app retains the last ten completed voice translations for its in-app page.
 
 Text chat takes a separate path:
 
@@ -261,7 +280,7 @@ CS2 -condebug → console.log (read-only, 150 ms polling)
   → bounded UTF-8 line parser → chat messages only
   → bounded queue (eight messages; stale after thirty seconds)
   → language detection / fixed language → M2M100 int8 → English
-  → Tauri chat event → independent, click-through chat overlay
+  → shared app history (10 messages) → chat overlay and in-app chat pane
 ```
 
 The text worker retains the model in memory. Reading the log and inference run
