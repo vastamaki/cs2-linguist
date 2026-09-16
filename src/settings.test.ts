@@ -1,9 +1,10 @@
+import { defaultChatSettings } from './types';
 import { expect, test } from 'bun:test';
 import { SettingsAutosave } from './settings';
 import type { Settings } from './types';
 
 test('rapid edits wait for earlier saves and a failed save does not block the next edit', async () => {
-  const settings: Settings = { backend: 'cpu', model: 'small', language: 'auto', threads: 4, font_size: 24, opacity: 0.45, position: null };
+  const settings: Settings = { voice_enabled: true, chat: { ...defaultChatSettings }, backend: 'cpu', model: 'small', language: 'auto', threads: 4, font_size: 24, opacity: 0.45, position: null };
   const first = Promise.withResolvers<void>();
   const entered = Promise.withResolvers<void>();
   const calls: Settings[] = [];

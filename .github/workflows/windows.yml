@@ -47,19 +47,25 @@ jobs:
       - run: cargo test -p linguist-core --locked
       - run: cargo fmt --all --check
       - run: bun run package:windows
+      - run: cargo test -p linguist-chat-worker --release --locked
+        env:
+          RUSTFLAGS: '-C target-feature=+crt-static'
+          CMAKE_POLICY_DEFAULT_CMP0091: NEW
+          CMAKE_MSVC_RUNTIME_LIBRARY: MultiThreaded
       - name: Verify worker runtime dependencies
         shell: pwsh
         run: |
-          foreach ($mode in 'cpu', 'gpu') {
-            $worker = "src-tauri/binaries/linguist-worker-$mode-x86_64-pc-windows-msvc.exe"
+          foreach ($mode in 'cpu', 'gpu', 'chat') {
+            $name = if ($mode -eq 'chat') { 'linguist-chat-worker' } else { "linguist-worker-$mode" }
+            $worker = "src-tauri/binaries/$name-x86_64-pc-windows-msvc.exe"
             $dependencies = & dumpbin /DEPENDENTS $worker | Out-String
             if ($LASTEXITCODE -ne 0) { throw "Could not inspect $worker" }
             Write-Output $dependencies
             if ($dependencies -match '(?im)^\s*(?:MSVCP\d+\w*|VCRUNTIME\d+\w*|MSVCRT\w*|UCRTBASE\w*|api-ms-win-crt-[\w-]+)\.dll\s*$') {
               throw "$worker must use the static MSVC runtime."
             }
-            if ($mode -eq 'cpu' -and $dependencies -match '(?i)vulkan-1\.dll') {
-              throw 'The CPU worker must not depend on Vulkan.'
+            if ($mode -ne 'gpu' -and $dependencies -match '(?i)vulkan-1\.dll') {
+              throw 'CPU workers must not depend on Vulkan.'
             }
           }
       - uses: actions/upload-artifact@v4

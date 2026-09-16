@@ -1,11 +1,11 @@
 # Linguist
 
-Local English subtitles for CS2 voice chat. Built with Bun, Vite, Tauri 2,
-Rust, WASAPI application loopback, Silero VAD, and whisper.cpp.
+Local English overlays for CS2 voice and text chat. Built with Bun, Vite, Tauri 2,
+Rust, WASAPI application loopback, Silero VAD, whisper.cpp, and CTranslate2.
 
 **Target: Windows 11 x64, CS2 in borderless-windowed mode.** The current source
 implements the capture pipeline, local models, CPU/Vulkan workers, tray controls,
-and transparent movable overlay. Windows gameplay/GPU/installer acceptance is
+and two independent transparent movable overlays. Windows gameplay/GPU/installer acceptance is
 still required; no Windows installer has been produced on the macOS development host.
 
 ## Use
@@ -17,10 +17,10 @@ still required; no Windows installer has been produced on the macOS development 
 2. Choose Russian when the voice chat is mostly Russian, especially for short
    callouts. Auto guesses separately for each phrase; use it for mixed languages.
 3. Choose CPU or GPU and click **Start translation**. Settings save automatically;
-   sliders preview immediately and save when released. Start shows the overlay;
-   **Pause translation** stops capture and hides it. The app waits for `cs2.exe`
+   sliders preview immediately and save when released. Start shows the enabled overlays;
+   **Pause translation** stops both workers and hides both overlays. The app waits for `cs2.exe`
    and reconnects when the game restarts.
-4. Use **Move overlay** to drag/resize the caption window, then **Lock overlay**.
+4. Use **Move voice overlay** to drag/resize the caption window, then **Lock overlay**.
    The locked overlay passes mouse input to the game without taking focus.
    You can position the overlay while paused; locking closes that preview.
 5. Closing Settings leaves Linguist in the tray. Use **Quit Linguist** to exit.
@@ -28,7 +28,8 @@ still required; no Windows installer has been produced on the macOS development 
 The tray also controls Start/Pause, CPU/GPU mode, position, and Settings.
 The Settings status shows the **actual** backend, including the reason for a GPU
 fallback. CPU is the initial default. Each backend/model/language/thread change
-restarts the worker and discards pending captions.
+restarts the affected worker and discards its pending captions. Voice and chat
+can be enabled separately; changing a chat model leaves voice translation running.
 
 The overlay has a thin border and a compact header showing engine state, actual
 CPU/GPU backend, model, selected spoken language, and the latest caption's detected
@@ -41,7 +42,7 @@ Model import accepts the exact upstream GGML files listed in
 [`crates/core/src/models.rs`](crates/core/src/models.rs), verified by SHA-256.
 For an offline setup, import both the speech model and the speech detector using
 their separate buttons. `.en`, `turbo`, quantized, and arbitrary other models are
-not accepted by this version.
+not accepted as speech models by this version.
 
 For missed or incorrect words, try **GPU + medium + a fixed spoken language**
 first. If your GPU has enough memory alongside CS2, try large-v3 next.
@@ -53,6 +54,55 @@ voices buried in gunfire or multiple people talking over each other.
 Decoding uses five-candidate beam search to compare possible phrases. Whisper's
 built-in speech/confidence check filters silence; the app does not discard its
 accepted segments using an additional speech-probability-only threshold.
+
+## Translate text chat
+
+1. Enable **Translate chat** in Settings. Voice translation is optional.
+2. In Steam → CS2 → Properties → Launch Options, add **`-condebug`** alongside
+   existing launch options, then restart CS2.
+3. Click **Choose log** and select `game/csgo/console.log` in CS2's installation
+   folder (Steam → CS2 → Manage → Browse local files).
+4. Download one of the two **text translation** models:
+
+   | Model | Download | Tradeoff |
+   | --- | ---: | --- |
+   | M2M100 418M int8 | 496 MB | Default; lower memory use and delay |
+   | M2M100 1.2B int8 | 1.26 GB | More capacity; higher memory use and delay |
+
+   Both translate from the M2M100 set of 100 source languages into English.
+   These are text models, separate from Whisper; no OCR is involved. Text
+   translation currently runs on CPU, independently of the voice CPU/GPU setting.
+   Start with two chat CPU threads to leave resources for the game.
+5. Choose **Written language** independently of **Spoken language**. Auto guesses
+   each message; choose Russian for mostly Russian chat. Short messages and slang
+   can be misidentified, including Russian being guessed as Bulgarian. Auto's
+   language coverage is smaller than the model's; select other languages manually.
+6. Click **Start translation**. Use **Move chat overlay** to place it, then lock it.
+   It shows the player, channel, English text, optional original, selected/last
+   language, model, and delay from reading the message until translation is ready.
+   At most six messages remain for twenty seconds.
+
+**`-condebug` makes CS2 write console output, including raw player chat, to disk.**
+Linguist reads the chosen file without modifying it; it does not save translations
+or send messages to CS2. Remove the launch option when you no longer want CS2 to
+log. Existing chat history is skipped on Start; only new complete lines are read.
+Missing files are watched, and truncation/recreation clears pending translations.
+Team/all-chat formats `[CT]`, `[T]`, `[ALL]`, and `[TEAM]` are recognized. Changes
+in CS2's log format or localization need validation on the game's current build.
+English and undetected very short messages remain as original text.
+
+**Import model folder** accepts the four exact files (`model.bin`, `config.json`,
+`shared_vocabulary.json`, `sentencepiece.bpe.model`) from the selected pinned
+conversion in [`crates/core/src/models.rs`](crates/core/src/models.rs). Downloads
+and imports verify each file's SHA-256; all four are required and checked again
+before the worker loads. Models remain on disk for offline reuse.
+
+The original [Meta M2M100 models](https://huggingface.co/facebook/m2m100_418M)
+are MIT licensed. We use community
+[CTranslate2 int8 conversions](https://huggingface.co/Torurzr/screentranslator-mt/tree/3e496f278e70067ba5490c35bc1203d995e4df74)
+at a pinned revision, with [CTranslate2](https://github.com/OpenNMT/CTranslate2)
+and [SentencePiece](https://github.com/google/sentencepiece) for native inference.
+A larger model is not a guarantee of better slang or game terminology translation.
 
 ## Develop on Windows
 
@@ -78,7 +128,7 @@ bun install --frozen-lockfile
 bun run desktop
 ```
 
-This builds the CPU worker and starts the native app with Vite. To also test GPU
+This builds the CPU voice and text workers and starts the native app with Vite. To also test GPU
 mode during development:
 
 ```powershell
@@ -86,9 +136,9 @@ bun run scripts/build-workers.ts all
 bun run tauri dev
 ```
 
-The worker build script produces separate CPU and Vulkan executables from the
-same source and uses the static MSVC C runtime. The CPU executable does not link
-Vulkan. End users need a compatible graphics driver for GPU mode, not the Vulkan
+The worker build script produces separate CPU and Vulkan voice executables from
+the same source, plus a CPU text worker. All use the static MSVC C runtime.
+Neither CPU executable links Vulkan. End users need a compatible graphics driver for GPU mode, not the Vulkan
 SDK, Bun, Rust, Python, or an API key.
 
 Both Rust and Whisper/ggml must use that same runtime. The script sets Rust's
@@ -109,16 +159,16 @@ From the same configured Developer PowerShell:
 bun run package:windows
 ```
 
-This builds both workers, builds the frontend, and bundles them into an NSIS
+This builds all three workers, builds the frontend, and bundles them into an NSIS
 installer under `$env:CARGO_TARGET_DIR/x86_64-pc-windows-msvc/release/bundle/nsis/`
 (`C:/t/x86_64-pc-windows-msvc/release/bundle/nsis/` with the setup above).
-The installer includes neither speech models nor a GPU driver. Tauri's standard
+The installer includes neither model weights nor a GPU driver. Tauri's standard
 WebView2 setup may require a network connection if WebView2 is absent.
 
 The [Windows workflow](.github/workflows/windows.yml) runs checks and builds the
 installer artifact on `windows-2022`. It activates x64 MSVC, uses Ninja and the
 short output path `D:/t`, verifies that workers have no MSVC runtime DLL dependency
-and that the CPU worker does not link Vulkan, and uploads `linguist-windows-x64`
+and that CPU workers do not link Vulkan, and uploads `linguist-windows-x64`
 on success. If a native build fails, `windows-cmake-diagnostics` contains the available CMake configure
 logs, including the nested shader-generator compiler checks. This build fix still
 needs a successful Windows run. Distribution signing and automatic updates are
@@ -167,6 +217,24 @@ fixture transcript; the normal app never writes transcripts or audio to disk.
 See [`docs/VALIDATION.md`](docs/VALIDATION.md) for observed results and the Windows
 acceptance checklist, including frame-time measurement.
 
+For real text inference on this Mac or a Windows build, use the downloaded model
+folder and the native worker. No Python or running game is needed:
+
+```sh
+bun scripts/build-workers.ts cpu
+bun scripts/check-chat.ts src-tauri/binaries/linguist-chat-worker-aarch64-apple-darwin m2m100-418m /path/to/model-folder
+```
+
+On Windows, substitute `src-tauri/binaries/linguist-chat-worker-x86_64-pc-windows-msvc.exe`.
+Use `m2m100-1.2b` with its matching folder to check the larger model. The integration
+check creates and removes a temporary synthetic console log and verifies partial
+UTF-8, repeated messages, log recreation, reset during inference, and Stop. It
+reports delays without printing captions. To inspect a translation explicitly:
+
+```sh
+/path/to/linguist-chat-worker --translate m2m100-418m /path/to/model-folder ru 'Два игрока идут через центр.'
+```
+
 ## Implementation
 
 ```text
@@ -186,6 +254,21 @@ capture stream IDs invalidate audio when the game or device disconnects. Caption
 events are deduplicated by ID, not text, so repeated callouts remain meaningful.
 Captions expire after eight seconds and at most three are retained.
 
+Text chat takes a separate path:
+
+```text
+CS2 -condebug → console.log (read-only, 150 ms polling)
+  → bounded UTF-8 line parser → chat messages only
+  → bounded queue (eight messages; stale after thirty seconds)
+  → language detection / fixed language → M2M100 int8 → English
+  → Tauri chat event → independent, click-through chat overlay
+```
+
+The text worker retains the model in memory. Reading the log and inference run
+on separate threads. Log resets invalidate in-flight work; Stop/restart invalidate
+parent worker generations. Repeated messages from the same player remain separate.
+Only the requested file is read, with at most 256 KiB per poll and 16 KiB per line.
+
 Tauri controls workers through private stdin/stdout pipes. Closing the control
 pipe stops the worker, including during inference. There is no HTTP server,
 cloud inference, game injection, microphone capture, or whole-system fallback.
@@ -194,7 +277,8 @@ URLs, size limits and SHA-256 verification, and atomically activates verified fi
 
 Settings and models are under Tauri's local app-data directory, typically
 `%LOCALAPPDATA%\dev.linguist.cs2\` on Windows. Audio and caption history are in
-memory only. Rendered captions always use DOM `textContent`.
+memory only; CS2 itself writes the console log when `-condebug` is enabled.
+Rendered captions and player names always use DOM `textContent`.
 
 `vendor/wasapi` is a minimal source patch of wasapi 0.24.0 correcting its handling
 of silent audio buffers; see [`PATCH.md`](vendor/wasapi/PATCH.md). Dependency and
@@ -212,6 +296,8 @@ model versions are pinned by the committed lockfiles and model catalog.
 - GPU inference shares graphics resources with CS2. Measure frame times; use CPU
   or the smaller model if gameplay suffers. No performance guarantee is made.
 - Only the default compatible Vulkan GPU is selected. No device picker in v1.
-- Models are intended for speech-to-English, not arbitrary target languages.
+- Output is English for both voice and text. Text translation is CPU-only; voice
+  translation additionally supports Vulkan. Chat slang, typos, mixed-language
+  messages, and source-language guesses can produce incorrect translations.
 - Windows 10, other games, Linux, exclusive fullscreen, speech synthesis, speaker
   attribution, and transcript storage are outside this version.

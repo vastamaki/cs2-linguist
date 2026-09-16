@@ -88,3 +88,58 @@ mod tests {
         }
     }
 }
+
+pub struct ChatModel {
+    pub id: &'static str,
+    pub files: &'static [Model],
+}
+// Community CTranslate2 int8 conversions of Meta's MIT-licensed M2M100 models.
+// Revision, LFS hashes, and hashes of the small JSON files are pinned together.
+macro_rules! text_files {
+    ($id:literal, $folder:literal, $bytes:literal, $hash:literal) => { &[
+        Model { id: $id, filename: concat!($id, "/model.bin"), bytes: $bytes, sha256: $hash,
+            url: concat!("https://huggingface.co/Torurzr/screentranslator-mt/resolve/3e496f278e70067ba5490c35bc1203d995e4df74/", $folder, "/model.bin") },
+        Model { id: $id, filename: concat!($id, "/config.json"), bytes: 233,
+            sha256: "72901fbd8abd89fb5cf4a388f26fc681f5c4c58a1e1a88b30b879f107270e7ee",
+            url: concat!("https://huggingface.co/Torurzr/screentranslator-mt/resolve/3e496f278e70067ba5490c35bc1203d995e4df74/", $folder, "/config.json") },
+        Model { id: $id, filename: concat!($id, "/shared_vocabulary.json"), bytes: 2924622,
+            sha256: "18916ac68f9ac8fbd5250ca603dcb3861aac8672924d93a8dadc82eb3147f941",
+            url: concat!("https://huggingface.co/Torurzr/screentranslator-mt/resolve/3e496f278e70067ba5490c35bc1203d995e4df74/", $folder, "/shared_vocabulary.json") },
+        Model { id: $id, filename: concat!($id, "/sentencepiece.bpe.model"), bytes: 2423393,
+            sha256: "d8f7c76ed2a5e0822be39f0a4f95a55eb19c78f4593ce609e2edbc2aea4d380a",
+            url: concat!("https://huggingface.co/Torurzr/screentranslator-mt/resolve/3e496f278e70067ba5490c35bc1203d995e4df74/", $folder, "/sentencepiece.bpe.model") },
+    ] };
+}
+pub const CHAT_MODELS: [ChatModel; 2] = [
+    ChatModel {
+        id: "m2m100-418m",
+        files: text_files!(
+            "m2m100-418m",
+            "m2m100-418M-int8",
+            490667752,
+            "a1826980fc5c037e69c7ac94fcb56c03001a66f380eb71863cc0a3879e71421b"
+        ),
+    },
+    ChatModel {
+        id: "m2m100-1.2b",
+        files: text_files!(
+            "m2m100-1.2b",
+            "m2m100-1.2B-int8",
+            1249655188,
+            "61a68b96c0e4a10a09a1944f9e6627a8854dccf53a0127817808bb976ce94b4f"
+        ),
+    },
+];
+pub fn chat_model(id: &str) -> Result<&'static ChatModel, String> {
+    CHAT_MODELS
+        .iter()
+        .find(|m| m.id == id)
+        .ok_or_else(|| "Unknown chat model.".into())
+}
+pub fn files(id: &str) -> Result<Vec<&'static Model>, String> {
+    if let Ok(m) = chat_model(id) {
+        Ok(m.files.iter().collect())
+    } else {
+        Ok(vec![model(id)?])
+    }
+}

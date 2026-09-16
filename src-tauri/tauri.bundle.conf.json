@@ -1,5 +1,5 @@
 {
   "bundle": {
-    "externalBin": ["binaries/linguist-worker-cpu", "binaries/linguist-worker-gpu"]
+    "externalBin": ["binaries/linguist-worker-cpu", "binaries/linguist-worker-gpu", "binaries/linguist-chat-worker"]
   }
 }

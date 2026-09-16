@@ -1,4 +1,5 @@
 import './style.css';
+import { chatControls, chatPreview, setupChat, fillChat, readChat, updateChatModels, updateChatControls, chatOverlay } from './chat';
 import { call, desktop, on } from './api';
 import { appendCaption, languageName, overlayStats, type VisibleCaption } from './captions';
 import { SettingsAutosave } from './settings';
@@ -20,6 +21,7 @@ const overlayHeader = `<header class="caption-header" aria-label="Translation de
 </header>`;
 let snapshot: Snapshot;
 let status: EngineStatus;
+let chatStatus: EngineStatus;
 let captions: VisibleCaption[] = [];
 let locked = true;
 const autosave = new SettingsAutosave(async settings => {
@@ -73,16 +75,33 @@ function updateStatus(value: EngineStatus) {
     $('overlay-status').textContent = visible ? value.message : '';
     return;
   }
-  $('status-text').textContent = value.message;
-  $('status-dot').classList.toggle('active', value.running);
-  $('engine-mode').textContent = value.backend === 'gpu' ? 'GPU · Vulkan' : 'CPU';
-  $('engine-phase').textContent = value.running ? 'ENGINE ACTIVE' : 'ENGINE PAUSED';
-  $('start-label').textContent = value.running ? 'Pause translation' : 'Start translation';
+  renderSessionStatus();
   $('warning').textContent = value.warning ?? '';
   $('warning').hidden = !value.warning;
 }
+function renderSessionStatus() {
+  if (isOverlay || !status || !chatStatus) return;
+  const running = status.running || chatStatus.running;
+  const parts = [];
+  if ($<HTMLInputElement>('voice-enabled').checked || status.running) parts.push(`Voice: ${status.message}`);
+  if ($<HTMLInputElement>('chat-enabled').checked || chatStatus.running) parts.push(`Chat: ${chatStatus.message}`);
+  $('status-text').textContent = parts.join(' · ') || 'Enable voice or chat translation to start.';
+  $('status-dot').classList.toggle('active', running);
+  $('engine-phase').textContent = running ? 'TRANSLATION ACTIVE' : 'TRANSLATION PAUSED';
+  $('start-label').textContent = running ? 'Pause translation' : 'Start translation';
+  const modes = [];
+  if ($<HTMLInputElement>('voice-enabled').checked || status.running) modes.push(`Voice ${status.backend === 'gpu' ? 'GPU' : 'CPU'}`);
+  if ($<HTMLInputElement>('chat-enabled').checked || chatStatus.running) modes.push('Chat CPU');
+  $('engine-mode').textContent = modes.join(' · ');
+  $('chat-state').textContent = chatStatus.message;
+}
+function updateChatStatus(value: EngineStatus) {
+  if (chatStatus && value.generation < chatStatus.generation) return;
+  chatStatus = value; renderSessionStatus();
+}
 function updateModels(models: InstalledModel[]) {
   snapshot.models = models;
+  updateChatModels(models);
   const selected = $<HTMLSelectElement>('model').value;
   const model = models.find(m => m.id === selected)!;
   const vad = models.find(m => m.id === 'vad')!;
@@ -100,6 +119,7 @@ function updateProgress(progress: DownloadProgress | null) {
   $<HTMLButtonElement>('download').disabled = busy || !desktop;
   $<HTMLButtonElement>('import').disabled = busy || !desktop;
   $<HTMLButtonElement>('import-vad').disabled = busy || !desktop;
+  for (const id of ['download-chat', 'import-chat']) $<HTMLButtonElement>(id).disabled = busy || !desktop;
   $('cancel').hidden = !busy;
   $('progress-section').hidden = false;
   $('progress-text').textContent = progress.message;
@@ -111,6 +131,7 @@ function formSettings(): Settings {
   const gpu = $<HTMLInputElement>('gpu').checked;
   const threads = Number($<HTMLInputElement>('threads').value);
   return { ...snapshot.settings,
+    voice_enabled: $<HTMLInputElement>('voice-enabled').checked, chat: readChat(snapshot.settings.chat),
     backend: gpu ? 'gpu' : 'cpu',
     model: $<HTMLSelectElement>('model').value as Settings['model'],
     language: $<HTMLSelectElement>('language').value,
@@ -131,6 +152,7 @@ async function save() {
   }
 }
 function fillSettings(s: Settings) {
+  $<HTMLInputElement>('voice-enabled').checked = s.voice_enabled; fillChat(s.chat);
   $<HTMLInputElement>(s.backend).checked = true;
   $<HTMLSelectElement>('model').value = s.model;
   $<HTMLSelectElement>('language').value = s.language;
@@ -141,9 +163,15 @@ function fillSettings(s: Settings) {
   updateAppearanceLabels();
 }
 function updateConditionalSettings() {
+  const voice = $<HTMLInputElement>('voice-enabled').checked;
+  $('voice-options').hidden = !voice; $<HTMLFieldSetElement>('voice-options').disabled = !voice;
+  $('voice-processing').hidden = !voice;
+  $('voice-preview').hidden = !voice;
+  $('voice-overlay-actions').hidden = !voice;
+  updateChatControls(); renderSessionStatus();
   const gpu = $<HTMLInputElement>('gpu').checked;
   $('cpu-options').hidden = gpu;
-  $<HTMLInputElement>('threads').disabled = gpu;
+  $<HTMLInputElement>('threads').disabled = gpu || !voice;
   $('gpu-help').hidden = !gpu;
   const model = $<HTMLSelectElement>('model').value as Settings['model'];
   const descriptions: Record<Settings['model'], string> = {
@@ -172,12 +200,12 @@ function settingsPage() {
   root.innerHTML = `
   <main class="shell">
     <header class="topbar"><a class="brand" href="#" aria-label="Linguist home"><span class="brand-icon">${speechIcon}</span><span>linguist<span class="brand-period">.</span></span></a><span class="local-badge"><span></span> LOCAL BY DESIGN</span></header>
-    <div class="intro"><div><div class="eyebrow">COUNTER-STRIKE 2 / VOICE TRANSLATION</div><h1>Stay in the conversation.</h1><p>Translate voice chat into English. Keep your eyes on the game.</p></div><span class="version">v0.1</span></div>
+    <div class="intro"><div><div class="eyebrow">COUNTER-STRIKE 2 / LOCAL TRANSLATION</div><h1>Stay in the conversation.</h1><p>Translate voice and text chat into English. Keep your eyes on the game.</p></div><span class="version">v0.1</span></div>
     <div id="platform-note" class="notice" hidden>UI preview — live game capture requires the Windows 11 desktop app.</div>
     <div id="error" class="notice error" role="alert" hidden></div><div id="warning" class="notice" role="status" hidden></div>
     <section class="status-strip" aria-label="Translation status"><div class="status-copy"><span id="status-dot" class="status-dot"></span><div><span id="engine-phase" class="eyebrow">ENGINE PAUSED</span><strong id="status-text">Ready when you are</strong></div></div><button id="start" class="button primary">${playIcon}<span id="start-label">Start translation</span></button></section>
     <form id="settings-form" class="workspace"><div class="controls">
-      <section class="panel"><div class="section-heading"><span class="section-number">01</span><h2>Translation</h2><span class="destination">→ ENGLISH</span></div>
+      <section class="panel"><div class="section-heading"><span class="section-number">01</span><h2>Voice</h2><label class="check-label"><input type="checkbox" id="voice-enabled" checked> Translate voice</label></div><fieldset id="voice-options" class="plain-fieldset">
         <label for="language">Spoken language</label><select id="language" aria-describedby="language-help"></select><p id="language-help" class="help"></p>
         <div class="field-header"><label for="model">Speech model</label><span id="model-ready" class="tag">SETUP REQUIRED</span></div>
         <select id="model" aria-describedby="model-description"><option value="base">Whisper base · lightweight</option><option value="small">Whisper small · balanced</option><option value="medium">Whisper medium · higher accuracy</option><option value="large-v3">Whisper large-v3 · highest capacity</option></select><p id="model-description" class="help"></p>
@@ -185,19 +213,21 @@ function settingsPage() {
           <div id="progress-section" hidden><progress id="progress" max="1" value="0"></progress><div class="progress-row"><span id="progress-text" role="status"></span><button id="cancel" type="button" class="text-button">Cancel</button></div></div>
           <div class="import-row"><button id="import" type="button" class="text-button">Import model file</button><span>·</span><button id="import-vad" type="button" class="text-button">Import speech detector</button></div>
         </div>
-      </section>
-      <section class="panel"><div class="section-heading"><span class="section-number">02</span><h2>Processing</h2></div><fieldset class="segmented"><legend class="sr-only">Processing backend</legend><label><input type="radio" name="backend" id="cpu" value="cpu" checked><span>CPU <small>Compatible</small></span></label><label><input type="radio" name="backend" id="gpu" value="gpu"><span>GPU <small>Accelerated</small></span></label></fieldset><div id="cpu-options" class="thread-row"><div><label for="threads">CPU threads</label><p class="help">Leave some room for the game.</p></div><input id="threads" type="number" required min="1" max="32" value="4"></div><p id="gpu-help" class="help gpu-help" hidden>GPU mode uses Vulkan. If unavailable, Linguist uses CPU and tells you why.</p></section>
+      </fieldset></section>
+      <section id="voice-processing" class="panel"><div class="section-heading"><span class="section-number">02</span><h2>Processing</h2></div><fieldset class="segmented"><legend class="sr-only">Processing backend</legend><label><input type="radio" name="backend" id="cpu" value="cpu" checked><span>CPU <small>Compatible</small></span></label><label><input type="radio" name="backend" id="gpu" value="gpu"><span>GPU <small>Accelerated</small></span></label></fieldset><div id="cpu-options" class="thread-row"><div><label for="threads">CPU threads</label><p class="help">Leave some room for the game.</p></div><input id="threads" type="number" required min="1" max="32" value="4"></div><p id="gpu-help" class="help gpu-help" hidden>GPU mode uses Vulkan. If unavailable, Linguist uses CPU and tells you why.</p></section>
+      ${chatControls}
       <p id="save-state" class="help" role="status">Settings save automatically.</p>
     </div>
-    <aside class="preview-column"><section class="preview-panel"><div class="preview-header"><span class="eyebrow">YOUR IN-GAME OVERLAY</span><span class="preview-tag">PREVIEW</span></div><div class="game-preview"><div class="map-grid"></div><div class="crosshair"></div><span class="game-coordinate">MID / 01</span><div class="sample-captions caption-panel">${overlayHeader}<div class="caption-content"><div class="caption sample-old">Two players coming through mid.</div><div class="caption">Watch your left. I’m covering B.</div></div></div><span class="preview-footnote">Example captions and timing</span></div><div class="preview-caption">The conversation, without the distraction.</div></section>
-      <section class="panel appearance"><div class="section-heading"><span class="section-number">03</span><h2>Overlay</h2></div>
+    <aside class="preview-column"><section id="voice-preview" class="preview-panel"><div class="preview-header"><span class="eyebrow">VOICE OVERLAY</span><span class="preview-tag">PREVIEW</span></div><div class="game-preview"><div class="map-grid"></div><div class="crosshair"></div><span class="game-coordinate">MID / 01</span><div class="sample-captions caption-panel">${overlayHeader}<div class="caption-content"><div class="caption sample-old">Two players coming through mid.</div><div class="caption">Watch your left. I’m covering B.</div></div></div><span class="preview-footnote">Example captions and timing</span></div><div class="preview-caption">The conversation, without the distraction.</div></section>
+      ${chatPreview}
+      <section class="panel appearance"><div class="section-heading"><span class="section-number">03</span><h2>Overlay style</h2></div>
         <div class="field-header"><label for="font-size">Subtitle size</label><output id="font-value" for="font-size">24px</output></div><input id="font-size" type="range" min="14" max="48" value="24">
         <div class="field-header"><label for="opacity">Background opacity</label><output id="opacity-value" for="opacity">45%</output></div><input id="opacity" type="range" min="0" max="90" value="45">
-        <div class="overlay-actions"><button id="move-overlay" class="button small" type="button">↔ Move overlay</button><button id="reset-overlay" class="text-button" type="button">Reset position</button></div><p class="help">Start translation to show captions. Pause to hide the overlay. Unlock to drag or resize, then lock it in place.</p>
+        <div id="voice-overlay-actions" class="overlay-actions"><button id="move-overlay" class="button small" type="button">↔ Move voice overlay</button><button id="reset-overlay" class="text-button" type="button">Reset position</button></div><p class="help">Start translation to show captions. Pause to hide the overlays. Unlock to drag or resize, then lock it in place.</p>
       </section>
-      <div class="privacy-note"><span class="privacy-mark">⌁</span><p><strong>Your audio stays with you.</strong><br>One model download. Fully offline translation.<br>Use CS2 in borderless-windowed mode.</p></div>
+      <div class="privacy-note"><span class="privacy-mark">⌁</span><p><strong>Your translations stay local.</strong><br>Download models once. Translate offline.<br>Use CS2 in borderless-windowed mode.</p></div>
     </aside></form>
-    <footer><span><span class="footer-dot"></span> CS2 AUDIO ONLY</span><span id="engine-mode">CPU</span><span id="latency">No audio stored</span><span class="footer-right">BUILT FOR THE NEXT ROUND</span></footer>
+    <footer><span><span class="footer-dot"></span> CS2 VOICE + CHAT</span><span id="engine-mode">CPU</span><span id="latency">No audio stored</span><span class="footer-right">BUILT FOR THE NEXT ROUND</span></footer>
   </main>`;
 
   $('platform-note').hidden = snapshot.supported;
@@ -206,6 +236,8 @@ function settingsPage() {
     option.textContent = code === 'auto' ? 'Detect automatically' : languageName(code);
     $('language').append(option);
   }
+  setupChat(snapshot, save, attempt);
+  $('save-state').before($('progress-section'));
   fillSettings(snapshot.settings); updateModels(snapshot.models); updateProgress(snapshot.download);
   $<HTMLButtonElement>('start').disabled = !snapshot.supported;
   if (!desktop) {
@@ -218,7 +250,7 @@ function settingsPage() {
     const button = $<HTMLButtonElement>('start');
     button.disabled = true;
     try {
-      if (status.running) await call('stop');
+      if (status.running || chatStatus.running) await call('stop');
       else {
         if (!$<HTMLFormElement>('settings-form').reportValidity()) return;
         await save();
@@ -227,7 +259,7 @@ function settingsPage() {
     } finally { button.disabled = !snapshot.supported; }
   });
   $('model').onchange = () => updateModels(snapshot.models);
-  for (const id of ['cpu', 'gpu', 'language']) $(id).onchange = updateConditionalSettings;
+  for (const id of ['cpu', 'gpu', 'language', 'voice-enabled', 'chat-enabled']) $(id).onchange = updateConditionalSettings;
   $('download').onclick = () => void attempt(() => call('download_model', { id: $<HTMLSelectElement>('model').value }));
   $('import').onclick = () => void attempt(() => call('import_model', { id: $<HTMLSelectElement>('model').value }));
   $('import-vad').onclick = () => void attempt(() => call('import_model', { id: 'vad' }));
@@ -256,15 +288,16 @@ function updateLock(value: boolean) {
   if (isOverlay) {
     $('move-bar').hidden = value; $('move-example').hidden = value;
     document.body.classList.toggle('unlocked', !value);
-  } else { $('move-overlay').textContent = value ? '↔ Move overlay' : '✓ Lock overlay'; }
+  } else { $('move-overlay').textContent = value ? '↔ Move voice overlay' : '✓ Lock voice overlay'; }
 }
 
 async function initialize() {
-  snapshot = await call<Snapshot>('snapshot');
+  snapshot = await call<Snapshot>('snapshot'); chatStatus = snapshot.chat_status;
   if (isOverlay) overlayPage(); else settingsPage();
   applyAppearance(snapshot.settings); updateStatus(snapshot.status); updateLock(snapshot.overlay_locked);
   await Promise.all([
     on<EngineStatus>('engine-status', updateStatus),
+    on<EngineStatus>('chat-status', updateChatStatus),
     on<Caption>('caption', caption => {
       if (isOverlay) { captions = appendCaption(captions, caption, status, Date.now()); renderCaptions(); }
       else if (status.running && caption.generation === status.generation) $('latency').textContent = `Last caption · ${(caption.latency_ms / 1000).toFixed(1)}s delay`;
@@ -283,6 +316,6 @@ async function initialize() {
   // Refresh after listeners are attached so window creation cannot miss a status transition.
   const current = await call<Snapshot>('snapshot'); snapshot.settings = current.settings;
   if (isOverlay) applyAppearance(current.settings);
-  updateStatus(current.status); updateLock(current.overlay_locked);
+  updateStatus(current.status); updateChatStatus(current.chat_status); updateLock(current.overlay_locked);
 }
-void initialize().catch(error);
+void (new URLSearchParams(location.search).has('chat-overlay') ? chatOverlay(root) : initialize()).catch(error);

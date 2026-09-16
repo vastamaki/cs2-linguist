@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod chat;
 pub mod models;
 
 use serde::{Deserialize, Serialize};
@@ -42,6 +43,8 @@ impl OverlayPosition {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Settings {
+    pub voice_enabled: bool,
+    pub chat: chat::ChatSettings,
     pub backend: Backend,
     pub model: String,
     pub language: String,
@@ -55,6 +58,8 @@ impl Default for Settings {
     fn default() -> Self {
         let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
         Self {
+            voice_enabled: true,
+            chat: chat::ChatSettings::default(),
             backend: Backend::Cpu,
             model: "small".into(),
             language: "auto".into(),
@@ -72,7 +77,11 @@ pub const LANGUAGES: &str = "auto en zh de es ru ko fr ja pt tr pl ca nl ar sv i
 
 impl Settings {
     pub fn validate(&self) -> Result<(), String> {
-        if self.model == "vad" || models::model(&self.model).is_err() {
+        self.chat.validate()?;
+        if !models::MODELS
+            .iter()
+            .any(|m| m.id == self.model && m.id != "vad")
+        {
             return Err("Choose a supported multilingual Whisper model.".into());
         }
         if !LANGUAGES.split_whitespace().any(|s| s == self.language) {
@@ -90,7 +99,8 @@ impl Settings {
         Ok(())
     }
     pub fn engine_changed(&self, other: &Self) -> bool {
-        self.backend != other.backend
+        self.voice_enabled != other.voice_enabled
+            || self.backend != other.backend
             || self.model != other.model
             || self.language != other.language
             || self.threads != other.threads
@@ -121,7 +131,7 @@ pub struct Caption {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkerCommand {
     Start {
-        settings: Settings,
+        settings: Box<Settings>,
         model_path: String,
         vad_path: String,
     },
@@ -131,6 +141,10 @@ pub enum WorkerCommand {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkerEvent {
+    Chat {
+        caption: chat::ChatCaption,
+    },
+    ChatReset,
     Status {
         phase: String,
         message: String,

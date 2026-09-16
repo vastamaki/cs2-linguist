@@ -56,6 +56,7 @@ fn run() -> Result<(), String> {
     else {
         return Ok(());
     };
+    let settings = *settings;
     settings.validate()?;
     if (settings.backend == Backend::Gpu) != cfg!(feature = "gpu") {
         return Err("Worker backend does not match the selected mode.".into());

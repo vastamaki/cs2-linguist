@@ -59,6 +59,52 @@ at 1299 ms total / 753 ms inference in a fresh run. These single runs do not
 establish a speed or accuracy improvement from beam search; use game recordings
 to assess the decoding and larger models together.
 
+## Text chat feature (macOS, 2026-09-16)
+
+- Native CTranslate2/SentencePiece CPU worker compiled in release mode; both CPU
+  voice and text workers built and copied by `scripts/build-workers.ts cpu`.
+  Core/Tauri and release voice/text worker Clippy checks passed.
+- Four Bun tests (23 assertions) and nine Rust core tests passed, including chat
+  history limits, expiry, stale sessions, settings migration, independent restart
+  decisions, UTF-8 split across file writes, repeated messages, log truncation,
+  deletion/recreation, and filtering non-chat/oversized messages. The text worker's
+  fixed-language/English/very-short-message detection check passed separately.
+- Both pinned M2M100 int8 models were downloaded into temporary storage. All four
+  files per model passed size/SHA-256 verification before real inference. No model
+  weights are committed. Native download/import UI cancellation and Windows
+  installation are not marked verified by these checks.
+- The real worker's stdin/stdout integration check (`scripts/check-chat.ts`) passed
+  with **both models**: old history skipped, partial UTF-8 waits for newline,
+  identical repeated messages get distinct IDs, English passes through, missing
+  files reconnect, and resetting a log during inference suppresses old results.
+  Stop exits successfully. Log fixtures contain only synthetic test messages.
+- Browser inspection verified conditional voice/chat controls, the in-app
+  `-condebug` instructions and disk-log notice, both model choices/sizes, separate
+  written-language selection, original-text toggle, and automatic preview updates.
+  This does not validate the native overlay's focus/click-through behavior.
+
+Individual CLI smoke calls used two CPU threads, four-beam decoding, and a loaded
+model on Apple Silicon. These are **examples, not accuracy or speed guarantees**:
+
+| Input / fixed source | 418M output (decode) | 1.2B output (decode) |
+| --- | --- | --- |
+| Два игрока идут через центр. Я прикрываю тебя. / Russian | “Two players go through the center.I’m hiding you.” (958 ms) | “Two players go through the center. I cover you.” (1634 ms) |
+| Zwei Spieler kommen durch die Mitte. / German | “Two players come through the middle.” (532 ms) | Same text (1266 ms) |
+| Kaksi pelaajaa tulee keskeltä. / Finnish | “Two players are in the middle.” (585 ms) | “There are two players in the middle.” (1332 ms) |
+
+Automatic detection preserved the English fixture unchanged. For “Привет, давайте
+пойдём вместе на точку Б.” it incorrectly guessed Bulgarian with both models;
+both nevertheless produced “Let’s go to point B.” (772 / 1659 ms). The detector is
+shared by both choices: a larger translation model does **not** fix language
+identification. This is why the UI recommends a fixed Russian source when
+appropriate and can show the original text. Finnish movement semantics were also
+imperfect. No CS2 slang accuracy claim follows from these few clean sentences.
+
+Two back-to-back Russian log messages accumulated extra queue delay. In one
+integration run, read-to-caption times were 587 / 1084 ms for 418M and 1713 /
+3121 ms for 1.2B. These omit up to 150 ms log-polling delay and exclude model load;
+they do not measure Windows CPU use, memory, game frame times, or live CS2 logs.
+
 ## Required Windows acceptance
 
 Build with `bun run package:windows`, then install the generated NSIS package on
@@ -102,13 +148,33 @@ threads, game graphics settings, and the installed app version.
 6. **Privacy:** after models are installed, disconnect networking and verify
    translation. Inspect app-data files: settings/models only, no audio/transcripts.
    Caption text containing `<script>` must display literally.
-7. **Performance:** replay the same CS2 demo or controlled sequence three times
+7. **Text chat:** add `-condebug` to existing Steam launch options, restart CS2,
+   and choose its actual `game/csgo/console.log`. Verify all-chat, CT/T team chat,
+   dead/spectator messages, Unicode player names, Cyrillic, timestamps/prefixes,
+   and the log format with the player's CS2 UI language. Confirm every supported
+   channel produces exactly one caption per newly logged message and old history
+   is skipped on Start. Test log rotation/truncation, missing-file recreation,
+   permission errors, repeated identical lines, and unrelated console spam.
+   Download/import both text models; reject missing or modified files, cancel
+   midway, retry, and restart offline. Compare Auto/Russian and keep original
+   messages visible when assessing slang and typos. Verify text CPU operation on a
+   PC without Vulkan, including simultaneous GPU voice translation.
+   Enable voice only, chat only, then both. Switch the chat model while voice is
+   active and vice versa; only the affected worker should restart. Pause/Start
+   during inference must discard old messages. Move/resize/lock each overlay,
+   check focus, DPI and monitor restoration, and persist both positions.
+   With `-condebug`, **CS2 writes a raw console log**; this is expected. Linguist
+   should only read it and never create a translated transcript. Test literal
+   HTML-like player names and chat text. Send any test chat manually in-game.
+8. **Performance:** replay the same CS2 demo or controlled sequence three times
    each with translation off, CPU, and GPU, using identical game settings.
    Record average and 1% low FPS/p95 frame time, app working set, CPU/GPU use,
    caption speech-end latency, and any Falling behind events. Use Task Manager
    for memory/utilization and a frame-time tool such as PresentMon for gameplay.
    The WAV benchmark provides reproducible inference/latency measurements but
    does not measure live WASAPI acquisition delay or CS2 FPS.
+   Repeat with each text model, voice alone, chat alone, and both together.
+   Record chat read-to-caption delay, queue drops, and model load time separately.
    Repeat for medium and large-v3 on GPU; verify model loading with CS2 already
    running, memory pressure, and explicit CPU fallback if GPU initialization fails.
 

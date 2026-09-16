@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/worker", "src-tauri"]
+members = ["crates/core", "crates/worker", "crates/chat-worker", "src-tauri"]
 default-members = ["crates/core"]
 resolver = "2"
 exclude = ["vendor/wasapi"]

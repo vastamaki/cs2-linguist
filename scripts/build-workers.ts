@@ -15,8 +15,10 @@ const metadata = Bun.spawnSync(['cargo', 'metadata', '--locked', '--no-deps', '-
 if (metadata.exitCode) throw new Error('Could not resolve the Cargo build directory.');
 const targetDirectory: string = JSON.parse(metadata.stdout.toString()).target_directory;
 await mkdir(join(root, 'src-tauri', 'binaries'), { recursive: true });
-for (const mode of all ? ['cpu', 'gpu'] : ['cpu']) {
-  const args = ['cargo', 'build', '--locked', '--release', '-p', 'linguist-worker', '--target', triple];
+for (const mode of all ? ['cpu', 'gpu', 'chat'] : ['cpu', 'chat']) {
+  const packageName = mode === 'chat' ? 'linguist-chat-worker' : 'linguist-worker';
+  const outputName = mode === 'chat' ? 'linguist-chat-worker' : `linguist-worker-${mode}`;
+  const args = ['cargo', 'build', '--locked', '--release', '-p', packageName, '--target', triple];
   if (mode === 'gpu') args.push('--features', 'gpu');
   const child = Bun.spawn(args, { cwd: root, stdout: 'inherit', stderr: 'inherit', env: {
     ...process.env,
@@ -32,5 +34,5 @@ for (const mode of all ? ['cpu', 'gpu'] : ['cpu']) {
   } });
   if (await child.exited) throw new Error(`${mode} worker build failed.`);
   const extension = windows ? '.exe' : '';
-  await copyFile(join(targetDirectory, triple, 'release', `linguist-worker${extension}`), join(root, 'src-tauri', 'binaries', `linguist-worker-${mode}-${triple}${extension}`));
+  await copyFile(join(targetDirectory, triple, 'release', `${packageName}${extension}`), join(root, 'src-tauri', 'binaries', `${outputName}-${triple}${extension}`));
 }

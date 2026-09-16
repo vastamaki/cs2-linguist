@@ -3,6 +3,7 @@ mod engine;
 mod models;
 mod overlay;
 
+use engine::Engine;
 use linguist_core::{Backend, EngineStatus, Settings};
 use serde::Serialize;
 use std::{
@@ -14,6 +15,7 @@ use tauri::{Emitter, Manager};
 struct AppState {
     settings: Mutex<Settings>,
     runtime: Mutex<engine::Runtime>,
+    chat_runtime: Mutex<engine::Runtime>,
     download: Mutex<Option<models::DownloadProgress>>,
     cancel_download: AtomicBool,
     data: PathBuf,
@@ -23,6 +25,9 @@ struct AppState {
 struct Snapshot {
     settings: Settings,
     status: EngineStatus,
+    chat_status: EngineStatus,
+    chat_overlay_locked: bool,
+    chat_languages: Vec<&'static str>,
     models: Vec<models::InstalledModel>,
     download: Option<models::DownloadProgress>,
     overlay_locked: bool,
@@ -36,6 +41,12 @@ fn snapshot(app: tauri::AppHandle) -> Snapshot {
     let snapshot = Snapshot {
         settings: state.settings.lock().unwrap().clone(),
         status: state.runtime.lock().unwrap().status.clone(),
+        chat_status: state.chat_runtime.lock().unwrap().status.clone(),
+        chat_overlay_locked: !app
+            .get_webview_window("chat-overlay")
+            .map(|w| w.is_resizable().unwrap_or(false))
+            .unwrap_or(false),
+        chat_languages: linguist_core::chat::LANGUAGES.split_whitespace().collect(),
         models: models::installed(&state.data),
         download: state.download.lock().unwrap().clone(),
         overlay_locked: !app
@@ -64,33 +75,79 @@ fn save_settings(app: tauri::AppHandle, mut settings: Settings) -> Result<(), St
         let mut current = state.settings.lock().unwrap();
         // Geometry is owned by the overlay; a settings form may be stale.
         settings.position = current.position.clone();
-        let changed = current.engine_changed(&settings);
+        settings.chat.position = current.chat.position.clone();
+        let changed = (
+            current.engine_changed(&settings),
+            current.chat.engine_changed(&settings.chat),
+        );
         persist(&app, &settings)?;
         *current = settings.clone();
         changed
     };
     let _ = app.emit("settings", &settings);
-    let running = state.runtime.lock().unwrap().status.running;
-    if changed && running {
-        stop(app.clone())?;
-        start(app)?;
+    let running = state.runtime.lock().unwrap().status.running
+        || state.chat_runtime.lock().unwrap().status.running;
+    if running {
+        let mut errors = Vec::new();
+        for (kind, changed, enabled, label) in [
+            (Engine::Voice, changed.0, settings.voice_enabled, "overlay"),
+            (
+                Engine::Chat,
+                changed.1,
+                settings.chat.enabled,
+                "chat-overlay",
+            ),
+        ] {
+            if !changed {
+                continue;
+            }
+            engine::stop(&app, kind);
+            if enabled {
+                if let Err(e) = engine::start(&app, kind) {
+                    errors.push(e);
+                }
+            }
+            if let Err(e) = overlay::set_overlay_locked(app.clone(), true, Some(label.into())) {
+                errors.push(e);
+            }
+        }
+        if !errors.is_empty() {
+            return Err(errors.join("\n"));
+        }
     }
     Ok(())
 }
 
 #[tauri::command]
 fn start(app: tauri::AppHandle) -> Result<(), String> {
-    engine::start(&app)?;
-    if let Err(error) = overlay::set_overlay_locked(app.clone(), true) {
-        engine::stop(&app);
-        return Err(error);
+    let settings = app.state::<AppState>().settings.lock().unwrap().clone();
+    if !settings.voice_enabled && !settings.chat.enabled {
+        return Err("Enable voice or chat translation first.".into());
     }
-    Ok(())
+    let result = (|| {
+        for (kind, enabled, label) in [
+            (Engine::Voice, settings.voice_enabled, "overlay"),
+            (Engine::Chat, settings.chat.enabled, "chat-overlay"),
+        ] {
+            if enabled {
+                engine::start(&app, kind)?;
+            }
+            overlay::set_overlay_locked(app.clone(), true, Some(label.into()))?;
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = stop(app);
+    }
+    result
 }
 #[tauri::command]
 fn stop(app: tauri::AppHandle) -> Result<(), String> {
-    engine::stop(&app);
-    overlay::set_overlay_locked(app, true)
+    engine::stop(&app, Engine::Voice);
+    engine::stop(&app, Engine::Chat);
+    let voice = overlay::set_overlay_locked(app.clone(), true, None);
+    let chat = overlay::set_overlay_locked(app, true, Some("chat-overlay".into()));
+    voice.and(chat)
 }
 
 fn show_settings(app: &tauri::AppHandle) {
@@ -113,11 +170,20 @@ fn tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let backend = Submenu::with_items(app, "Processing mode", true, &[&cpu, &gpu])?;
     let position = item("position", "Move / Lock overlay")?;
     let reset = item("reset", "Reset overlay position")?;
+    let chat_position = item("chat-position", "Move / Lock chat overlay")?;
     let settings = item("settings", "Settings…")?;
     let quit = item("quit", "Quit Linguist")?;
     let menu = Menu::with_items(
         app,
-        &[&start, &backend, &position, &reset, &settings, &quit],
+        &[
+            &start,
+            &backend,
+            &position,
+            &chat_position,
+            &reset,
+            &settings,
+            &quit,
+        ],
     )?;
     TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().unwrap().clone())
@@ -126,13 +192,9 @@ fn tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| {
             let result = match event.id.as_ref() {
                 "start" => {
-                    let running = app
-                        .state::<AppState>()
-                        .runtime
-                        .lock()
-                        .unwrap()
-                        .status
-                        .running;
+                    let state = app.state::<AppState>();
+                    let running = state.runtime.lock().unwrap().status.running
+                        || state.chat_runtime.lock().unwrap().status.running;
                     if running {
                         crate::stop(app.clone())
                     } else {
@@ -148,20 +210,26 @@ fn tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                     };
                     save_settings(app.clone(), settings)
                 }
-                "position" => {
+                "position" | "chat-position" => {
+                    let label = if event.id.as_ref() == "chat-position" {
+                        "chat-overlay"
+                    } else {
+                        "overlay"
+                    };
                     let locked = app
-                        .get_webview_window("overlay")
+                        .get_webview_window(label)
                         .map(|w| !w.is_resizable().unwrap_or(false))
                         .unwrap_or(true);
-                    overlay::set_overlay_locked(app.clone(), !locked)
+                    overlay::set_overlay_locked(app.clone(), !locked, Some(label.into()))
                 }
-                "reset" => overlay::reset_overlay(app.clone()),
+                "reset" => overlay::reset_overlay(app.clone(), None),
                 "settings" => {
                     show_settings(app);
                     Ok(())
                 }
                 "quit" => {
-                    engine::stop(app);
+                    engine::stop(app, Engine::Voice);
+                    engine::stop(app, Engine::Chat);
                     app.exit(0);
                     Ok(())
                 }
@@ -204,19 +272,22 @@ fn main() {
             app.manage(AppState {
                 settings: Mutex::new(settings),
                 runtime: Mutex::new(engine::Runtime::default()),
+                chat_runtime: Mutex::new(engine::Runtime::default()),
                 download: Mutex::new(None),
                 cancel_download: AtomicBool::new(false),
                 data,
             });
             tray(app.handle())?;
-            overlay::initialize(app.handle())?;
+            overlay::initialize(app.handle(), "overlay")?;
+            overlay::initialize(app.handle(), "chat-overlay")?;
             let monitor_app = app.handle().clone();
             std::thread::spawn(move || loop {
                 std::thread::sleep(std::time::Duration::from_secs(3));
                 let handle = monitor_app.clone();
                 if monitor_app
                     .run_on_main_thread(move || {
-                        let _ = overlay::ensure_visible(&handle);
+                        let _ = overlay::ensure_visible(&handle, "overlay");
+                        let _ = overlay::ensure_visible(&handle, "chat-overlay");
                     })
                     .is_err()
                 {
@@ -235,13 +306,13 @@ fn main() {
                     let _ = window.hide();
                 }
             }
-            if window.label() == "overlay" {
+            if matches!(window.label(), "overlay" | "chat-overlay") {
                 match event {
                     tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
-                        overlay::save_geometry(window.app_handle())
+                        overlay::save_geometry(window.app_handle(), window.label())
                     }
                     tauri::WindowEvent::ScaleFactorChanged { .. } => {
-                        let _ = overlay::ensure_visible(window.app_handle());
+                        let _ = overlay::ensure_visible(window.app_handle(), window.label());
                     }
                     _ => {}
                 }
@@ -255,6 +326,7 @@ fn main() {
             models::download_model,
             models::cancel_download,
             models::import_model,
+            models::pick_chat_log,
             overlay::set_overlay_locked,
             overlay::reset_overlay
         ])
@@ -262,7 +334,8 @@ fn main() {
         .expect("Could not initialize Linguist")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
-                engine::stop(app);
+                engine::stop(app, Engine::Voice);
+                engine::stop(app, Engine::Chat);
             }
         });
 }

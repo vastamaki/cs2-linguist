@@ -1,9 +1,9 @@
 use crate::AppState;
-use linguist_core::models::{model, verify_file, Model, MODELS};
+use linguist_core::models::{chat_model, files, model, verify_file, Model, CHAT_MODELS, MODELS};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
-    path::{Path, PathBuf},
+    path::Path,
     sync::atomic::Ordering,
     time::{Duration, Instant},
 };
@@ -30,12 +30,16 @@ pub struct DownloadProgress {
 pub fn installed(data: &Path) -> Vec<InstalledModel> {
     MODELS
         .iter()
-        .map(|m| InstalledModel {
-            id: m.id.into(),
-            bytes: m.bytes,
-            installed: std::fs::metadata(data.join("models").join(m.filename))
-                .map(|s| s.len() == m.bytes)
-                .unwrap_or(false),
+        .map(|m| (m.id, vec![m]))
+        .chain(CHAT_MODELS.iter().map(|m| (m.id, m.files.iter().collect())))
+        .map(|(id, files)| InstalledModel {
+            id: id.into(),
+            bytes: files.iter().map(|m| m.bytes).sum(),
+            installed: files.iter().all(|m| {
+                std::fs::metadata(data.join("models").join(m.filename))
+                    .map(|s| s.len() == m.bytes)
+                    .unwrap_or(false)
+            }),
         })
         .collect()
 }
@@ -46,7 +50,7 @@ fn progress(app: &tauri::AppHandle, value: DownloadProgress) {
 }
 
 fn begin(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
-    model(id)?;
+    files(id)?;
     let state = app.state::<AppState>();
     let mut current = state.download.lock().unwrap();
     if current
@@ -59,7 +63,7 @@ fn begin(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
     *current = Some(DownloadProgress {
         id: id.into(),
         received: 0,
-        total: model(id)?.bytes,
+        total: files(id)?.iter().map(|m| m.bytes).sum(),
         phase: "downloading".into(),
         message: "Preparing model…".into(),
     });
@@ -118,8 +122,10 @@ pub fn cancel_download(app: tauri::AppHandle) {
 pub async fn download_model(app: tauri::AppHandle, id: String) -> Result<(), String> {
     begin(&app, &id)?;
     let result = async {
-        download_one(&app, model(&id)?).await?;
-        if id != "vad" {
+        for file in files(&id)? {
+            download_one(&app, file).await?;
+        }
+        if id != "vad" && chat_model(&id).is_err() {
             download_one(&app, model("vad")?).await?;
         }
         Ok(())
@@ -143,6 +149,9 @@ async fn download_one(app: &tauri::AppHandle, model: &Model) -> Result<(), Strin
     {
         return Ok(());
     }
+    tokio::fs::create_dir_all(path.parent().unwrap())
+        .await
+        .map_err(|e| e.to_string())?;
     let partial = path.with_extension("partial");
     let result = async {
         cancelled(app)?;
@@ -226,93 +235,134 @@ async fn download_one(app: &tauri::AppHandle, model: &Model) -> Result<(), Strin
 #[tauri::command]
 pub async fn import_model(app: tauri::AppHandle, id: String) -> Result<(), String> {
     begin(&app, &id)?;
-    progress(
-        &app,
-        DownloadProgress {
-            id: id.clone(),
-            received: 0,
-            total: model(&id)?.bytes,
-            phase: "importing".into(),
-            message: "Select the original GGML model file…".into(),
-        },
-    );
-    let app_for_task = app.clone();
-    let id_for_task = id.clone();
+    let task_app = app.clone();
+    let task_id = id.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<(), String> {
-        let app = app_for_task;
-        let model = model(&id_for_task)?;
-        let source: PathBuf = app
-            .dialog()
-            .file()
-            .add_filter("Whisper GGML model", &["bin"])
-            .blocking_pick_file()
-            .ok_or("Cancelled")?
-            .into_path()
-            .map_err(|e| e.to_string())?;
-        cancelled(&app)?;
-        let target = app
-            .state::<AppState>()
-            .data
-            .join("models")
-            .join(model.filename);
-        let partial = target.with_extension("partial");
-        let result = (|| {
-            use std::io::{Read, Write};
-            let mut source = std::fs::File::open(source).map_err(|e| e.to_string())?;
-            if source.metadata().map_err(|e| e.to_string())?.len() != model.bytes {
-                return Err(format!(
-                    "Select the supported {} file ({} bytes).",
-                    model.filename, model.bytes
-                ));
-            }
-            let mut file = std::fs::File::create(&partial).map_err(|e| e.to_string())?;
-            let mut buffer = [0u8; 65536];
-            let mut received = 0;
-            let mut hash = Sha256::new();
-            let mut last_progress = Instant::now();
-            loop {
-                cancelled(&app)?;
-                let n = source.read(&mut buffer).map_err(|e| e.to_string())?;
-                if n == 0 {
-                    break;
+        let app = task_app;
+        let id = task_id;
+        let group = chat_model(&id).is_ok();
+        progress(
+            &app,
+            DownloadProgress {
+                id: id.clone(),
+                received: 0,
+                total: 0,
+                phase: "importing".into(),
+                message: if group {
+                    "Select the extracted text model folder…"
+                } else {
+                    "Select the original GGML model file…"
                 }
-                received += n as u64;
-                if received > model.bytes {
-                    return Err("Model is larger than expected.".into());
-                }
-                hash.update(&buffer[..n]);
-                file.write_all(&buffer[..n]).map_err(|e| e.to_string())?;
-                if last_progress.elapsed() > Duration::from_millis(100) {
-                    progress(
-                        &app,
-                        DownloadProgress {
-                            id: model.id.into(),
-                            received,
-                            total: model.bytes,
-                            phase: "importing".into(),
-                            message: "Importing and verifying model…".into(),
-                        },
-                    );
-                    last_progress = Instant::now();
-                }
-            }
-            if received != model.bytes || format!("{:x}", hash.finalize()) != model.sha256 {
-                return Err("Checksum mismatch. Choose the unmodified upstream GGML file.".into());
-            }
-            file.sync_all().map_err(|e| e.to_string())?;
-            drop(file);
-            cancelled(&app)?;
-            std::fs::rename(&partial, &target).map_err(|e| e.to_string())?;
-            Ok(())
-        })();
-        if result.is_err() {
-            let _ = std::fs::remove_file(&partial);
+                .into(),
+            },
+        );
+        let source = if group {
+            app.dialog().file().blocking_pick_folder()
+        } else {
+            app.dialog()
+                .file()
+                .add_filter("Whisper GGML model", &["bin"])
+                .blocking_pick_file()
         }
-        result
+        .ok_or("Cancelled")?
+        .into_path()
+        .map_err(|e| e.to_string())?;
+        for file in files(&id)? {
+            let source = if group {
+                source.join(Path::new(file.filename).file_name().unwrap())
+            } else {
+                source.clone()
+            };
+            import_one(&app, file, &source)?;
+        }
+        Ok(())
     })
     .await
     .map_err(|e| e.to_string())
     .and_then(|r| r);
     finish(&app, &id, &result);
     result
+}
+
+fn import_one(app: &tauri::AppHandle, model: &Model, source: &Path) -> Result<(), String> {
+    use std::io::{Read, Write};
+    cancelled(app)?;
+    let target = app
+        .state::<AppState>()
+        .data
+        .join("models")
+        .join(model.filename);
+    std::fs::create_dir_all(target.parent().unwrap()).map_err(|e| e.to_string())?;
+    let partial = target.with_extension("partial");
+    let result = (|| {
+        let mut source = std::fs::File::open(source).map_err(|e| e.to_string())?;
+        if source.metadata().map_err(|e| e.to_string())?.len() != model.bytes {
+            return Err(format!(
+                "Select the supported {} file ({} bytes).",
+                model.filename, model.bytes
+            ));
+        }
+        let mut file = std::fs::File::create(&partial).map_err(|e| e.to_string())?;
+        let mut buffer = [0u8; 65536];
+        let mut received = 0;
+        let mut hash = Sha256::new();
+        let mut last_progress = Instant::now();
+        loop {
+            cancelled(app)?;
+            let n = source.read(&mut buffer).map_err(|e| e.to_string())?;
+            if n == 0 {
+                break;
+            }
+            received += n as u64;
+            if received > model.bytes {
+                return Err("Model is larger than expected.".into());
+            }
+            hash.update(&buffer[..n]);
+            file.write_all(&buffer[..n]).map_err(|e| e.to_string())?;
+            if last_progress.elapsed() > Duration::from_millis(100) {
+                progress(
+                    app,
+                    DownloadProgress {
+                        id: model.id.into(),
+                        received,
+                        total: model.bytes,
+                        phase: "importing".into(),
+                        message: format!("Importing and verifying {}", model.filename),
+                    },
+                );
+                last_progress = Instant::now();
+            }
+        }
+        if received != model.bytes || format!("{:x}", hash.finalize()) != model.sha256 {
+            return Err("Checksum mismatch. Choose the supported unmodified model files.".into());
+        }
+        file.sync_all().map_err(|e| e.to_string())?;
+        drop(file);
+        cancelled(app)?;
+        std::fs::rename(&partial, &target).map_err(|e| e.to_string())?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&partial);
+    }
+    result
+}
+
+#[tauri::command]
+pub async fn pick_chat_log(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("Select CS2 console.log (launch CS2 with -condebug first)")
+            .add_filter("CS2 console log", &["log"])
+            .blocking_pick_file()
+            .map(|file| {
+                file.into_path()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .map_err(|e| e.to_string())
+            })
+            .transpose()
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }

@@ -8,10 +8,10 @@ export function languageName(code: string): string {
 }
 
 export interface VisibleCaption extends Caption { expires: number }
-export function appendCaption(current: VisibleCaption[], caption: Caption, status: EngineStatus, now: number): VisibleCaption[] {
+export function appendCaption<T extends Caption>(current: (T & { expires: number })[], caption: T, status: EngineStatus, now: number, limit = 3, lifetime = 8000): (T & { expires: number })[] {
   if (!status.running || caption.generation !== status.generation) return current;
   if (current.some(c => c.generation === caption.generation && c.id === caption.id)) return current;
-  return [...current.filter(c => c.expires > now), { ...caption, expires: now + 8000 }].slice(-3);
+  return [...current.filter(c => c.expires > now), { ...caption, expires: now + lifetime }].slice(-limit);
 }
 
 export function overlayStats(settings: Settings, status: EngineStatus, caption: VisibleCaption | undefined, now: number) {
